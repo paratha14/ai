@@ -1,7 +1,7 @@
 # Provider Protocol SDK (UPP) - LLM Reference Guide
 
 **Package**: `@providerprotocol/ai`
-**Version**: 0.0.36
+**Version**: 0.0.39
 **Runtime**: Bun/Node.js (ESM only)
 
 ## Overview
@@ -131,6 +131,7 @@ The package uses subpath exports to keep bundles small. Import only what you nee
 | `@providerprotocol/ai/middleware/pubsub/server/express` | Express adapter |
 | `@providerprotocol/ai/middleware/pubsub/server/fastify` | Fastify adapter |
 | `@providerprotocol/ai/middleware/pubsub/server/h3` | H3/Nuxt adapter |
+| `@providerprotocol/ai/utils` | Utilities: Zod conversion, partial JSON parsing |
 
 ### Example: Minimal Import
 
@@ -172,9 +173,9 @@ interface LLMOptions<TParams> {
   model: ModelReference;              // Required: provider model reference
   system?: string | unknown[];        // System prompt
   params?: TParams;                   // Provider-specific parameters
-  tools?: Tool[];                     // Available tools
+  tools?: ToolInput | Tool[];                // Available tools (accepts Zod schemas)
   toolStrategy?: ToolUseStrategy;     // Tool execution configuration
-  structure?: JSONSchema;             // Structured output schema
+  structure?: Structure;              // Structured output (JSON Schema or Zod)
   middleware?: Middleware[];          // Request/response middleware
   config?: Partial<ProviderConfig>;   // Provider configuration overrides
 }
@@ -185,6 +186,9 @@ interface LLMOptions<TParams> {
 ```typescript
 const instance = llm({ model: anthropic('claude-sonnet-4-20250514') });
 
+// System-only generation (no input)
+const turn = await instance.generate();
+
 // Simple generation
 const turn = await instance.generate('Hello');
 
@@ -194,7 +198,8 @@ const turn = await instance.generate([userMessage, assistantMessage], 'Follow-up
 // With Thread
 const turn = await instance.generate(thread, 'New message');
 
-// Streaming
+// Streaming (also supports no-input)
+const stream = instance.stream(); // system-only
 const stream = instance.stream('Tell me more');
 for await (const event of stream) { /* ... */ }
 const turn = await stream.turn;
@@ -303,10 +308,13 @@ const restored = Thread.fromJSON(json);
 
 ### Define Tools
 
-```typescript
-import type { Tool } from '@providerprotocol/ai';
+Tools can define parameters using JSON Schema or Zod schemas.
 
-const calculator: Tool<{ a: number; b: number }, string> = {
+```typescript
+import type { ToolInput } from '@providerprotocol/ai';
+
+// Using JSON Schema
+const calculator: ToolInput<{ a: number; b: number }, string> = {
   name: 'add',
   description: 'Add two numbers together',
   parameters: {
@@ -318,6 +326,19 @@ const calculator: Tool<{ a: number; b: number }, string> = {
     required: ['a', 'b'],
   },
   run: async ({ a, b }) => `The sum is ${a + b}`,
+};
+
+// Using Zod schema (requires zod package)
+import { z } from 'zod';
+
+const weatherTool: ToolInput = {
+  name: 'get_weather',
+  description: 'Get weather for a location',
+  parameters: z.object({
+    location: z.string().describe('City name'),
+    units: z.enum(['celsius', 'fahrenheit']).optional(),
+  }),
+  run: async ({ location }) => fetchWeather(location),
 };
 ```
 
@@ -360,7 +381,10 @@ const instance = llm({
 
 ## Structured Output
 
+Structured output accepts JSON Schema or Zod schemas directly.
+
 ```typescript
+// Using JSON Schema
 const instance = llm({
   model: anthropic('claude-sonnet-4-20250514'),
   structure: {
@@ -377,7 +401,25 @@ const instance = llm({
 const turn = await instance.generate('John is 30 years old and likes hiking and reading');
 console.log(turn.data);
 // { name: 'John', age: 30, hobbies: ['hiking', 'reading'] }
+
+// Using Zod schema (requires zod package)
+import { z } from 'zod';
+
+const zodInstance = llm({
+  model: anthropic('claude-sonnet-4-20250514'),
+  structure: z.object({
+    name: z.string(),
+    age: z.number(),
+    hobbies: z.array(z.string()),
+  }),
+});
+
+const turn = await zodInstance.generate('John is 30 years old and likes hiking and reading');
+console.log(turn.data);
+// { name: 'John', age: 30, hobbies: ['hiking', 'reading'] }
 ```
+
+**Note**: Zod schemas must be object schemas (`z.object()`). Non-object schemas like `z.string()` or `z.array()` will throw an error.
 
 ---
 
@@ -686,10 +728,10 @@ app.post('/api/ai', async (request, reply) => {
 
 ```typescript
 // server/api/ai.post.ts
+import { sendStream } from 'h3';
 import { llm } from '@providerprotocol/ai';
 import { anthropic } from '@providerprotocol/ai/anthropic';
-import { parseBody } from '@providerprotocol/ai/proxy';
-import { h3 as h3Adapter } from '@providerprotocol/ai/proxy';
+import { parseBody, h3 as h3Adapter } from '@providerprotocol/ai/proxy';
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event);
@@ -703,7 +745,7 @@ export default defineEventHandler(async (event) => {
   const wantsStream = getHeader(event, 'accept')?.includes('text/event-stream');
 
   if (wantsStream) {
-    return h3Adapter.streamSSE(instance.stream(messages), event);
+    return sendStream(event, h3Adapter.createSSEStream(instance.stream(messages)));
   }
   return h3Adapter.sendJSON(await instance.generate(messages), event);
 });
@@ -886,6 +928,47 @@ const instance = llm({
     baseUrl: 'https://your-proxy.com/v1',
   },
 });
+```
+
+---
+
+## Zod Schema Utilities
+
+The SDK provides utilities for working with Zod schemas directly. These are used internally but also exported for advanced use cases.
+
+```typescript
+import {
+  isZodSchema,
+  isZodV4,
+  zodToJSONSchema,
+  zodToJSONSchemaSync,
+  resolveStructure,
+  resolveTools,
+} from '@providerprotocol/ai/utils';
+```
+
+### Utility Functions
+
+| Function | Description |
+|----------|-------------|
+| `isZodSchema(value)` | Type guard for any Zod schema (v3 or v4) |
+| `isZodV4(schema)` | Checks if schema is Zod v4+ |
+| `zodToJSONSchema(schema)` | Async conversion to JSON Schema |
+| `zodToJSONSchemaSync(schema)` | Sync conversion (requires prior async load) |
+| `resolveStructure(structure)` | Pass-through for JSONSchema, converts Zod |
+| `resolveTools(tools)` | Resolve tool array, converting Zod parameters |
+
+### Zod Version Support
+
+- **Zod v4+**: Uses native `z.toJSONSchema()` - no additional dependencies
+- **Zod v3**: Requires `zod-to-json-schema` package
+
+```bash
+# For Zod v4 (recommended)
+bun add zod
+
+# For Zod v3
+bun add zod zod-to-json-schema
 ```
 
 ---
@@ -1403,3 +1486,7 @@ console.log('Final:', turn.data);
 6. **Stream Completion**: Always `await stream.turn` after iterating to ensure completion.
 
 7. **Tool Approval**: Tools can have an `approval` function for human-in-the-loop workflows.
+
+8. **Zod Optional**: Zod is an optional peer dependency. Only install if using Zod schemas for `structure` or tool parameters.
+
+9. **No-Input Generation**: Both `generate()` and `stream()` support being called without arguments for system-prompt-only inference.

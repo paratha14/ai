@@ -91,6 +91,21 @@ const t2 = await claude.generate(history, 'What is my name?');
 // Response: "Your name is Alice"
 ```
 
+### System-Only Inference
+
+Both `generate()` and `stream()` can be called with no arguments for system-prompt-only inference:
+
+```typescript
+const assistant = llm({
+  model: anthropic('claude-sonnet-4-20250514'),
+  system: 'You are a haiku generator. Generate a haiku about coding.',
+});
+
+// No user input needed
+const turn = await assistant.generate();
+console.log(turn.response.text);
+```
+
 ### Tools
 
 ```typescript
@@ -106,6 +121,27 @@ const turn = await claude.generate({
     run: async ({ location }) => ({ temp: 72, conditions: 'sunny' }),
   }],
 }, 'What is the weather in Tokyo?');
+```
+
+#### Tools with Zod Parameters
+
+Tool parameters also accept Zod schemas:
+
+```typescript
+import { z } from 'zod';
+
+const model = llm({
+  model: anthropic('claude-sonnet-4-20250514'),
+  tools: [{
+    name: 'get_weather',
+    description: 'Get weather for a location',
+    parameters: z.object({
+      location: z.string().describe('City name'),
+      units: z.enum(['celsius', 'fahrenheit']).optional(),
+    }),
+    run: async ({ location, units }) => fetchWeather(location, units),
+  }],
+});
 ```
 
 ### Structured Output
@@ -128,6 +164,37 @@ const extractor = llm({
 
 const turn = await extractor.generate('John is 30 years old');
 console.log(turn.data); // { name: 'John', age: 30 }
+```
+
+#### Zod Schema Support
+
+Structured output and tool parameters accept Zod schemas directly, with automatic conversion to JSON Schema:
+
+```typescript
+import { llm } from '@providerprotocol/ai';
+import { anthropic } from '@providerprotocol/ai/anthropic';
+import { z } from 'zod';
+
+const extractor = llm({
+  model: anthropic('claude-sonnet-4-20250514'),
+  structure: z.object({
+    name: z.string(),
+    age: z.number(),
+    tags: z.array(z.string()),
+  }),
+});
+
+const turn = await extractor.generate('Extract: John Doe, 30 years old, likes coding');
+console.log(turn.data); // { name: "John Doe", age: 30, tags: ["coding"] }
+```
+
+**Requirements:**
+- Zod schemas must be object schemas (`z.object()`). Non-object schemas will throw an error.
+- Zod is an optional peer dependency - install only if using Zod schemas:
+
+```bash
+bun add zod                    # v4+ for native JSON Schema conversion
+bun add zod zod-to-json-schema # v3 requires additional package
 ```
 
 ### Multimodal Input
@@ -750,9 +817,10 @@ const redisAdapter: PubSubAdapter = {
   async exists(streamId) { /* check if stream exists */ },
   async append(streamId, event) { /* append event, create lazily */ },
   async getEvents(streamId) { /* return events or [] */ },
-  subscribe(streamId, onEvent, onComplete) { /* subscribe to live events */ },
+  subscribe(streamId, onEvent, onComplete, onFinalData) { /* subscribe to live events */ },
   publish(streamId, event) { /* broadcast to subscribers */ },
-  async remove(streamId) { /* notify onComplete then delete */ },
+  setFinalData(streamId, data) { /* store final Turn data */ },
+  async remove(streamId) { /* notify onFinalData, onComplete, then delete */ },
 };
 ```
 
@@ -903,11 +971,12 @@ app.post('/ai', async (request, reply) => {
 });
 
 // Nuxt/H3 (server/api/ai.post.ts)
+import { sendStream } from 'h3';
 import { h3 as h3Adapter, parseBody } from '@providerprotocol/ai/proxy';
 export default defineEventHandler(async (event) => {
   const { messages, system, params } = parseBody(await readBody(event));
   if (params?.stream) {
-    return h3Adapter.streamSSE(claude.stream(messages, { system }), event);
+    return sendStream(event, h3Adapter.createSSEStream(claude.stream(messages, { system })));
   }
   return h3Adapter.sendJSON(await claude.generate(messages, { system }), event);
 });
@@ -1174,7 +1243,29 @@ import type {
   Middleware,
   MiddlewareContext,
   StreamContext,
+
+  // Schema types (Zod support)
+  Structure,
+  ZodLike,
 } from '@providerprotocol/ai';
+```
+
+**Zod Utilities:**
+
+```typescript
+import {
+  isZodSchema,
+  isZodV4,
+  zodToJSONSchema,
+  zodToJSONSchemaSync,
+  resolveStructure,
+  resolveTools,
+} from '@providerprotocol/ai/utils';
+
+// Type guard for Zod schemas
+if (isZodSchema(schema)) {
+  const jsonSchema = zodToJSONSchemaSync(schema);
+}
 ```
 
 **Type-Safe Enums:**
