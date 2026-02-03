@@ -21,6 +21,7 @@ import { resolveImageResult, type ImageStreamLike } from './image-stream.ts';
 interface H3Event {
   node: {
     res: {
+      statusCode: number;
       setHeader(name: string, value: string): void;
       write(chunk: string): boolean;
       end(): void;
@@ -73,14 +74,14 @@ export function sendImageJSON(result: ImageResult, event: H3Event): unknown {
 /**
  * Stream a StreamResult as Server-Sent Events.
  *
+ * Note: For better H3/Nuxt integration, prefer using `createSSEStream` with `sendStream`:
+ * ```typescript
+ * import { sendStream } from 'h3';
+ * return sendStream(event, h3Adapter.createSSEStream(stream));
+ * ```
+ *
  * @param stream - The StreamResult from instance.stream()
  * @param event - H3 event object
- *
- * @example
- * ```typescript
- * const stream = instance.stream(messages);
- * return h3Adapter.streamSSE(stream, event);
- * ```
  */
 export function streamSSE(stream: StreamResult, event: H3Event): void {
   const res = event.node.res;
@@ -205,7 +206,7 @@ export function createImageSSEStream(stream: ImageStreamLike): ReadableStream<Ui
 }
 
 /**
- * Send an error response.
+ * Send an error response with proper HTTP status.
  *
  * @param message - Error message
  * @param status - HTTP status code
@@ -213,6 +214,7 @@ export function createImageSSEStream(stream: ImageStreamLike): ReadableStream<Ui
  * @returns Error object for H3 to serialize
  */
 export function sendError(message: string, status: number, event: H3Event): { error: string; statusCode: number } {
+  event.node.res.statusCode = status;
   return { error: message, statusCode: status };
 }
 
@@ -222,10 +224,10 @@ export function sendError(message: string, status: number, event: H3Event): { er
  * @example Basic usage
  * ```typescript
  * // Nuxt server route: server/api/ai.post.ts
+ * import { sendStream } from 'h3';
  * import { llm } from '@providerprotocol/ai';
  * import { anthropic } from '@providerprotocol/ai/anthropic';
- * import { parseBody } from '@providerprotocol/ai/proxy';
- * import { h3 as h3Adapter } from '@providerprotocol/ai/proxy/server';
+ * import { parseBody, h3 as h3Adapter } from '@providerprotocol/ai/proxy';
  *
  * export default defineEventHandler(async (event) => {
  *   const body = await readBody(event);
@@ -234,7 +236,7 @@ export function sendError(message: string, status: number, event: H3Event): { er
  *
  *   const wantsStream = getHeader(event, 'accept')?.includes('text/event-stream');
  *   if (wantsStream) {
- *     return h3Adapter.streamSSE(instance.stream(messages), event);
+ *     return sendStream(event, h3Adapter.createSSEStream(instance.stream(messages)));
  *   } else {
  *     const turn = await instance.generate(messages);
  *     return h3Adapter.sendJSON(turn, event);
@@ -245,11 +247,11 @@ export function sendError(message: string, status: number, event: H3Event): { er
  * @example API Gateway with authentication (Nuxt)
  * ```typescript
  * // server/api/ai.post.ts
+ * import { sendStream } from 'h3';
  * import { llm } from '@providerprotocol/ai';
  * import { anthropic } from '@providerprotocol/ai/anthropic';
  * import { ExponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai/http';
- * import { parseBody } from '@providerprotocol/ai/proxy';
- * import { h3 as h3Adapter } from '@providerprotocol/ai/proxy/server';
+ * import { parseBody, h3 as h3Adapter } from '@providerprotocol/ai/proxy';
  *
  * // Server manages AI provider keys - users never see them
  * const claude = llm({
@@ -278,7 +280,7 @@ export function sendError(message: string, status: number, event: H3Event): { er
  *   const { messages, system, params } = parseBody(body);
  *
  *   if (params?.stream) {
- *     return h3Adapter.streamSSE(claude.stream(messages, { system }), event);
+ *     return sendStream(event, h3Adapter.createSSEStream(claude.stream(messages, { system })));
  *   }
  *   const turn = await claude.generate(messages, { system });
  *   return h3Adapter.sendJSON(turn, event);

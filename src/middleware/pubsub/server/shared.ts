@@ -69,6 +69,7 @@ export async function runSubscriberStream(
     let resolveWait: (() => void) | null = null;
     let completed = false;
     let lastSentCursor = -1;
+    let finalData: unknown = undefined;
 
     const onEvent = (event: StreamEvent, cursor?: number): void => {
       queue.push({ event, cursor: cursor ?? null });
@@ -80,7 +81,11 @@ export async function runSubscriberStream(
       resolveWait?.();
     };
 
-    const unsubscribe = adapter.subscribe(streamId, onEvent, onComplete);
+    const onFinalData = (data: unknown): void => {
+      finalData = data;
+    };
+
+    const unsubscribe = adapter.subscribe(streamId, onEvent, onComplete, onFinalData);
 
     const onAbort = (): void => {
       completed = true;
@@ -161,6 +166,10 @@ export async function runSubscriberStream(
     }
 
     if (!signal?.aborted) {
+      // Emit final data (Turn) if available before [DONE]
+      if (finalData !== undefined) {
+        writer.write(`data: ${JSON.stringify(finalData)}\n\n`);
+      }
       writer.write('data: [DONE]\n\n');
     }
     writer.end();

@@ -134,7 +134,7 @@ describe('pubsubMiddleware', () => {
   });
 
   describe('onStreamEnd', () => {
-    test('notifies subscribers and removes stream from adapter', async () => {
+    test('waits for pending appends but does not finalize (onTurn does)', async () => {
       const mw = pubsubMiddleware({ adapter, streamId: 'complete-stream' });
       const ctx = createMiddlewareContext('llm', 'claude-3', 'anthropic', true, createRequest());
 
@@ -154,15 +154,15 @@ describe('pubsubMiddleware', () => {
 
       await Promise.resolve();
 
-      expect(completionNotified).toBe(true);
+      // onStreamEnd should NOT finalize - onTurn does
+      expect(completionNotified).toBe(false);
       const exists = await adapter.exists('complete-stream');
-      expect(exists).toBe(false);
+      expect(exists).toBe(true);
     });
 
-    test('waits for pending appends before removal', async () => {
+    test('waits for pending appends before setting stream ended flag', async () => {
       let resolveAppend: () => void;
       let appendResolvedAt: number | null = null;
-      let removeCalledAt: number | null = null;
 
       const appendPromise = new Promise<void>((resolve) => {
         resolveAppend = () => {
@@ -178,10 +178,6 @@ describe('pubsubMiddleware', () => {
           await appendPromise;
           await base.append(streamId, event);
         },
-        remove: async (streamId) => {
-          removeCalledAt = Date.now();
-          await base.remove(streamId);
-        },
       };
 
       const mw = pubsubMiddleware({ adapter: delayedAdapter, streamId: 'pending-stream' });
@@ -193,14 +189,14 @@ describe('pubsubMiddleware', () => {
       mw.onStreamEvent!(textDelta('Hello'), streamCtx);
 
       const endPromise = mw.onStreamEnd!(streamCtx);
-      expect(removeCalledAt).toBeNull();
 
       resolveAppend!();
       await endPromise;
 
-      expect(removeCalledAt).not.toBeNull();
       expect(appendResolvedAt).not.toBeNull();
-      expect(removeCalledAt ?? 0).toBeGreaterThanOrEqual(appendResolvedAt ?? 0);
+      // Stream should still exist (onTurn hasn't been called yet)
+      const exists = await delayedAdapter.exists('pending-stream');
+      expect(exists).toBe(true);
     });
 
     test('does nothing when no streamId', async () => {
@@ -212,6 +208,113 @@ describe('pubsubMiddleware', () => {
 
       // Should not throw
       await mw.onStreamEnd!(streamCtx);
+    });
+  });
+
+  describe('onTurn', () => {
+    test('sets final data and removes stream after onStreamEnd', async () => {
+      const mw = pubsubMiddleware({ adapter, streamId: 'turn-stream' });
+      const ctx = createMiddlewareContext('llm', 'claude-3', 'anthropic', true, createRequest());
+
+      mw.onStart!(ctx);
+      const streamCtx = createStreamContext(ctx.state);
+
+      // Trigger lazy stream creation via append
+      mw.onStreamEvent!(textDelta('Hello'), streamCtx);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      let completionNotified = false;
+      let receivedFinalData: unknown = undefined;
+      adapter.subscribe('turn-stream', () => {}, () => {
+        completionNotified = true;
+      }, (data) => {
+        receivedFinalData = data;
+      });
+
+      // Simulate stream end
+      await mw.onStreamEnd!(streamCtx);
+
+      // Stream should still exist
+      expect(await adapter.exists('turn-stream')).toBe(true);
+      expect(completionNotified).toBe(false);
+
+      // Create a mock turn
+      const { createTurn } = await import('../../../../src/types/turn.ts');
+      const { AssistantMessage } = await import('../../../../src/types/messages.ts');
+      const mockTurn = createTurn(
+        [new AssistantMessage([{ type: 'text', text: 'Hello!' }])],
+        [],
+        { inputTokens: 10, outputTokens: 5, totalTokens: 15, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        1
+      );
+
+      // Call onTurn
+      await mw.onTurn!(mockTurn, ctx);
+
+      // Wait for microtasks
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Now stream should be removed and completion notified
+      expect(await adapter.exists('turn-stream')).toBe(false);
+      expect(completionNotified).toBe(true);
+      expect(receivedFinalData).toBeDefined();
+      expect((receivedFinalData as { messages: unknown[] }).messages).toBeDefined();
+    });
+
+    test('does nothing when no streamId', async () => {
+      const mw = pubsubMiddleware({ adapter });
+      const ctx = createMiddlewareContext('llm', 'claude-3', 'anthropic', true, createRequest());
+
+      mw.onStart!(ctx);
+
+      const { createTurn } = await import('../../../../src/types/turn.ts');
+      const { AssistantMessage } = await import('../../../../src/types/messages.ts');
+      const mockTurn = createTurn(
+        [new AssistantMessage([{ type: 'text', text: 'Hello!' }])],
+        [],
+        { inputTokens: 10, outputTokens: 5, totalTokens: 15, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        1
+      );
+
+      // Should not throw
+      await mw.onTurn!(mockTurn, ctx);
+    });
+
+    test('cleans up orphan stream and warns when generate() used with streamId', async () => {
+      const mw = pubsubMiddleware({ adapter, streamId: 'generate-stream' });
+      const ctx = createMiddlewareContext('llm', 'claude-3', 'anthropic', false, createRequest());
+
+      mw.onStart!(ctx);
+
+      // Stream should exist after onStart
+      expect(await adapter.exists('generate-stream')).toBe(true);
+
+      const { createTurn } = await import('../../../../src/types/turn.ts');
+      const { AssistantMessage } = await import('../../../../src/types/messages.ts');
+      const mockTurn = createTurn(
+        [new AssistantMessage([{ type: 'text', text: 'Hello!' }])],
+        [],
+        { inputTokens: 10, outputTokens: 5, totalTokens: 15, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        1
+      );
+
+      // Capture console.warn
+      const originalWarn = console.warn;
+      let warnMessage = '';
+      console.warn = (msg: string) => { warnMessage = msg; };
+
+      // Call onTurn without onStreamEnd (simulating generate)
+      await mw.onTurn!(mockTurn, ctx);
+
+      // Restore console.warn
+      console.warn = originalWarn;
+
+      // Should have warned about misuse
+      expect(warnMessage).toContain('streamId "generate-stream" was configured');
+      expect(warnMessage).toContain('.generate() was used instead of .stream()');
+
+      // Stream should be cleaned up
+      expect(await adapter.exists('generate-stream')).toBe(false);
     });
   });
 

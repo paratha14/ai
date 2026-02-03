@@ -693,6 +693,107 @@ describe('LLM generate execution', () => {
   });
 });
 
+describe('LLM no-input execution', () => {
+  test('generate() works with no input (system-only)', async () => {
+    let capturedMessageCount = -1;
+
+    const handler = createMockLLMHandler({
+      responses: [
+        createResponse(new AssistantMessage('Response from system prompt only'), defaultUsage(3, 5)),
+      ],
+      onRequest: (request) => {
+        // Capture count immediately - messages array gets mutated after complete() returns
+        capturedMessageCount = request.messages.length;
+      },
+    });
+
+    const provider = createProvider<MockParams>({
+      name: 'mock-llm',
+      version: '1.0.0',
+      handlers: { llm: handler },
+    });
+
+    const instance = llm<MockParams>({
+      model: provider('mock-model'),
+      system: 'You are a helpful assistant. Say hello.',
+    });
+
+    const turn = await instance.generate();
+
+    expect(turn.response.text).toContain('Response from system prompt only');
+    expect(capturedMessageCount).toBe(0);
+  });
+
+  test('stream() works with no input (system-only)', async () => {
+    let capturedMessageCount = -1;
+
+    const handler = createMockLLMHandler({
+      responses: [
+        createResponse(new AssistantMessage('Streamed response'), defaultUsage(3, 5)),
+      ],
+      streamEvents: [[textDelta('Streamed'), textDelta(' response')]],
+      onRequest: (request) => {
+        capturedMessageCount = request.messages.length;
+      },
+    });
+
+    const provider = createProvider<MockParams>({
+      name: 'mock-llm',
+      version: '1.0.0',
+      handlers: { llm: handler },
+    });
+
+    const instance = llm<MockParams>({
+      model: provider('mock-model'),
+      system: 'Generate something.',
+    });
+
+    const events: StreamEvent[] = [];
+    const stream = instance.stream();
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    const turn = await stream.turn;
+
+    expect(turn.response.text).toContain('Streamed response');
+    expect(capturedMessageCount).toBe(0);
+    expect(events.length).toBeGreaterThan(0);
+  });
+
+  test('generate() with empty string creates user message', async () => {
+    let capturedMessageCount = -1;
+    let capturedFirstMessageType = '';
+
+    const handler = createMockLLMHandler({
+      responses: [
+        createResponse(new AssistantMessage('Response'), defaultUsage(3, 5)),
+      ],
+      onRequest: (request) => {
+        capturedMessageCount = request.messages.length;
+        if (request.messages[0]) {
+          capturedFirstMessageType = request.messages[0].type;
+        }
+      },
+    });
+
+    const provider = createProvider<MockParams>({
+      name: 'mock-llm',
+      version: '1.0.0',
+      handlers: { llm: handler },
+    });
+
+    const instance = llm<MockParams>({
+      model: provider('mock-model'),
+    });
+
+    await instance.generate('');
+
+    expect(capturedMessageCount).toBe(1);
+    expect(capturedFirstMessageType).toBe('user');
+  });
+});
+
 describe('LLM stream execution', () => {
   test('streams events and executes tools', async () => {
     const toolCall: ToolCall = {

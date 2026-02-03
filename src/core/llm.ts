@@ -199,18 +199,23 @@ function inputToMessage(input: InferenceInput): Message {
  * Parses flexible input arguments to separate conversation history from new messages.
  *
  * Supports multiple input patterns:
+ * - No input (system-only generation)
  * - Thread object with existing messages
  * - Message array as history
  * - Direct input (string, Message, or ContentBlock) without history
  *
- * @param historyOrInput - Either conversation history or the first input
+ * @param historyOrInput - Either conversation history, first input, or undefined for no input
  * @param inputs - Additional inputs to convert to messages
  * @returns Object containing separated history and new messages arrays
  */
 function parseInputs(
-  historyOrInput: Message[] | Thread | InferenceInput,
+  historyOrInput: Message[] | Thread | InferenceInput | undefined,
   inputs: InferenceInput[]
 ): { history: Message[]; messages: Message[] } {
+  // Handle no-input case (system-only generation)
+  if (historyOrInput === undefined && inputs.length === 0) {
+    return { history: [], messages: [] };
+  }
   if (
     typeof historyOrInput === 'object' &&
     historyOrInput !== null &&
@@ -1031,7 +1036,7 @@ export function llm<TParams = unknown>(
     capabilities,
 
     async generate(
-      historyOrInput: Message[] | Thread | InferenceInput,
+      historyOrInput?: Message[] | Thread | InferenceInput,
       ...inputs: InferenceInput[]
     ): Promise<Turn> {
       const { history, messages } = parseInputs(historyOrInput, inputs);
@@ -1050,7 +1055,7 @@ export function llm<TParams = unknown>(
     },
 
     stream(
-      historyOrInput: Message[] | Thread | InferenceInput,
+      historyOrInput?: Message[] | Thread | InferenceInput,
       ...inputs: InferenceInput[]
     ): StreamResult {
       // Check streaming capability

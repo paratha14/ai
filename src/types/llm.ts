@@ -199,17 +199,18 @@ export interface LLMInstance<TParams = unknown> {
    * Executes inference and returns the complete Turn.
    *
    * Supports multiple calling patterns:
+   * - No input (system-only): `generate()`
    * - Single input: `generate('Hello')`
    * - Multiple inputs: `generate('Context...', 'Question?')`
    * - With history: `generate(messages, 'Follow-up?')`
    * - With thread: `generate(thread, 'Next message')`
    *
-   * @param historyOrInput - History (Message[] or Thread) or first input
+   * @param historyOrInput - Optional history (Message[] or Thread) or first input
    * @param input - Additional inputs to include in the request
    * @returns Promise resolving to the complete Turn
    */
   generate(
-    historyOrInput: Message[] | Thread | InferenceInput,
+    historyOrInput?: Message[] | Thread | InferenceInput,
     ...input: InferenceInput[]
   ): Promise<Turn>;
 
@@ -219,12 +220,17 @@ export interface LLMInstance<TParams = unknown> {
    * Returns an async iterable of stream events that can also
    * be awaited for the final Turn.
    *
-   * @param historyOrInput - History (Message[] or Thread) or first input
+   * Supports multiple calling patterns:
+   * - No input (system-only): `stream()`
+   * - Single input: `stream('Hello')`
+   * - With history: `stream(messages, 'Follow-up?')`
+   *
+   * @param historyOrInput - Optional history (Message[] or Thread) or first input
    * @param input - Additional inputs to include in the request
    * @returns StreamResult that yields events and resolves to Turn
    */
   stream(
-    historyOrInput: Message[] | Thread | InferenceInput,
+    historyOrInput?: Message[] | Thread | InferenceInput,
     ...input: InferenceInput[]
   ): StreamResult;
 

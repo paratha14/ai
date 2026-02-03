@@ -13,6 +13,7 @@ import type {
   StoredStream,
   SubscriptionCallback,
   CompletionCallback,
+  FinalDataCallback,
   Unsubscribe,
   MemoryAdapterOptions,
 } from './types.ts';
@@ -26,11 +27,13 @@ interface MutableStoredStream {
 interface Subscriber {
   onEvent: SubscriptionCallback;
   onComplete: CompletionCallback;
+  onFinalData?: FinalDataCallback;
 }
 
 interface StreamEntry {
   stream: MutableStoredStream;
   subscribers: Set<Subscriber>;
+  finalData?: unknown;
 }
 
 /**
@@ -100,9 +103,9 @@ export function memoryAdapter(options: MemoryAdapterOptions = {}): PubSubAdapter
       return entry ? [...entry.stream.events] : [];
     },
 
-    subscribe(streamId, onEvent, onComplete): Unsubscribe {
+    subscribe(streamId, onEvent, onComplete, onFinalData): Unsubscribe {
       const entry = getOrCreate(streamId);
-      const subscriber: Subscriber = { onEvent, onComplete };
+      const subscriber: Subscriber = { onEvent, onComplete, onFinalData };
       entry.subscribers.add(subscriber);
 
       return () => {
@@ -124,10 +127,22 @@ export function memoryAdapter(options: MemoryAdapterOptions = {}): PubSubAdapter
       }
     },
 
+    setFinalData(streamId, data): void {
+      const entry = streams.get(streamId);
+      if (entry) {
+        entry.finalData = data;
+      }
+    },
+
     async remove(streamId): Promise<void> {
       const entry = streams.get(streamId);
       if (entry) {
         for (const subscriber of entry.subscribers) {
+          if (entry.finalData !== undefined && subscriber.onFinalData) {
+            scheduleCallback(() => {
+              subscriber.onFinalData!(entry.finalData);
+            });
+          }
           scheduleCallback(subscriber.onComplete);
         }
         streams.delete(streamId);

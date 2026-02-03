@@ -15,8 +15,10 @@ import type {
   StreamContext,
 } from '../../types/middleware.ts';
 import type { StreamEvent } from '../../types/stream.ts';
+import type { Turn } from '../../types/turn.ts';
 import type { PubSubAdapter, PubSubOptions } from './types.ts';
 import { memoryAdapter } from './memory-adapter.ts';
+import { serializeTurn } from '../../providers/proxy/serialization.ts';
 
 export type {
   PubSubAdapter,
@@ -24,6 +26,7 @@ export type {
   StoredStream,
   SubscriptionCallback,
   CompletionCallback,
+  FinalDataCallback,
   Unsubscribe,
   MemoryAdapterOptions,
 } from './types.ts';
@@ -31,6 +34,7 @@ export { memoryAdapter } from './memory-adapter.ts';
 
 const STATE_KEY_STREAM_ID = 'pubsub:streamId';
 const STATE_KEY_ADAPTER = 'pubsub:adapter';
+const STATE_KEY_STREAM_ENDED = 'pubsub:streamEnded';
 
 interface AppendChainState {
   chain: Promise<void>;
@@ -174,7 +178,43 @@ export function pubsubMiddleware(options: PubSubOptions = {}): Middleware {
     },
 
     async onStreamEnd(ctx: StreamContext): Promise<void> {
-      await finalizeStreamByState(ctx.state);
+      const id = ctx.state.get(STATE_KEY_STREAM_ID) as string | undefined;
+      if (!id) {
+        return;
+      }
+      // Wait for all appends to complete but don't finalize yet
+      // onTurn will be called next with the Turn data
+      await waitForAppends(id);
+      clearAppendState(id);
+      ctx.state.set(STATE_KEY_STREAM_ENDED, true);
+    },
+
+    async onTurn(turn: Turn, ctx: MiddlewareContext): Promise<void> {
+      const id = ctx.state.get(STATE_KEY_STREAM_ID) as string | undefined;
+      const streamEnded = ctx.state.get(STATE_KEY_STREAM_ENDED) as boolean | undefined;
+
+      if (!id) {
+        return;
+      }
+
+      // Only emit Turn if we were streaming (onStreamEnd was called)
+      if (streamEnded) {
+        // Set the final Turn data so subscribers receive it before completion
+        adapter.setFinalData(id, serializeTurn(turn));
+        // Now remove the stream (notifies subscribers with final data + completion)
+        await adapter.remove(id).catch(() => {});
+      } else {
+        // streamId was set but .generate() was used instead of .stream()
+        // Clean up the orphan stream entry and warn about misuse
+        const exists = await adapter.exists(id);
+        if (exists) {
+          console.warn(
+            `[pubsub] streamId "${id}" was configured but .generate() was used instead of .stream(). ` +
+            `Pubsub middleware only works with streaming. Cleaning up orphan stream.`
+          );
+          await adapter.remove(id).catch(() => {});
+        }
+      }
     },
 
     async onError(_error: Error, ctx: MiddlewareContext): Promise<void> {

@@ -40,6 +40,13 @@ export type CompletionCallback = () => void;
 export type Unsubscribe = () => void;
 
 /**
+ * Final data callback when stream completes with data.
+ *
+ * @param data - The final data (typically serialized Turn)
+ */
+export type FinalDataCallback = (data: unknown) => void;
+
+/**
  * Storage adapter interface for pub-sub middleware.
  *
  * Stores in-flight streams only. Completed streams are removed immediately.
@@ -64,17 +71,26 @@ export interface PubSubAdapter {
 
   /**
    * Subscribes to live events (creates lazily if needed).
+   *
+   * @param onFinalData - Optional callback for final data (Turn) before completion
    */
   subscribe(
     streamId: string,
     onEvent: SubscriptionCallback,
-    onComplete: CompletionCallback
+    onComplete: CompletionCallback,
+    onFinalData?: FinalDataCallback
   ): Unsubscribe;
 
   /**
    * Publishes event to all subscribers.
    */
   publish(streamId: string, event: StreamEvent): void;
+
+  /**
+   * Sets final data to be sent to subscribers before completion.
+   * Typically used to send the serialized Turn.
+   */
+  setFinalData(streamId: string, data: unknown): void;
 
   /**
    * Notifies subscribers and removes stream from storage.
