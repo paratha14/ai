@@ -7,7 +7,7 @@
  * @module types/tool
  */
 
-import type { JSONSchema } from './schema.ts';
+import type { JSONSchema, Structure } from './schema.ts';
 
 /**
  * Provider-namespaced metadata for tools.
@@ -158,6 +158,49 @@ export interface Tool<TParams = unknown, TResult = unknown> {
    * @param params - The parameters the tool would be called with
    * @returns Whether to approve the execution
    */
+  approval?(params: TParams): boolean | Promise<boolean>;
+}
+
+/**
+ * Tool input type that accepts Zod schemas for parameters.
+ *
+ * This is the user-facing type for defining tools. Zod schemas are
+ * automatically converted to JSON Schema before being sent to providers.
+ *
+ * @typeParam TParams - The type of parameters the tool accepts
+ * @typeParam TResult - The type of result the tool returns
+ *
+ * @example
+ * ```typescript
+ * import { z } from 'zod';
+ *
+ * const tool: ToolInput<{ location: string }> = {
+ *   name: 'get_weather',
+ *   description: 'Get weather for a location',
+ *   parameters: z.object({
+ *     location: z.string().describe('City name'),
+ *   }),
+ *   run: async (params) => fetchWeather(params.location),
+ * };
+ * ```
+ */
+export interface ToolInput<TParams = unknown, TResult = unknown> {
+  /** Tool name (must be unique within an llm() instance) */
+  name: string;
+
+  /** Human-readable description for the model to understand when to use this tool */
+  description: string;
+
+  /** JSON Schema or Zod schema defining the tool's parameters */
+  parameters: Structure;
+
+  /** Provider-specific metadata, namespaced by provider name */
+  metadata?: ToolMetadata;
+
+  /** Executes the tool with the provided parameters */
+  run(params: TParams): TResult | Promise<TResult>;
+
+  /** Optional approval handler for sensitive operations */
   approval?(params: TParams): boolean | Promise<boolean>;
 }
 

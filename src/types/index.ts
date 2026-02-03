@@ -26,6 +26,10 @@ export type {
   JSONSchema,
   JSONSchemaProperty,
   JSONSchemaPropertyType,
+  Structure,
+  ZodLike,
+  ZodV3Like,
+  ZodV4Like,
 } from './schema.ts';
 
 /**
@@ -67,6 +71,7 @@ export {
  */
 export type {
   Tool,
+  ToolInput,
   ToolCall,
   ToolResult,
   ToolMetadata,

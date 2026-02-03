@@ -15,6 +15,7 @@ import type {
   BoundLLMModel,
   LLMCapabilities,
 } from '../types/llm.ts';
+import type { JSONSchema } from '../types/schema.ts';
 import type { AssistantMessage } from '../types/messages.ts';
 import type { ContentBlock } from '../types/content.ts';
 import {
@@ -46,6 +47,7 @@ import {
   toolExecutionEnd,
 } from '../types/stream.ts';
 import { toError, isCancelledError } from '../utils/error.ts';
+import { resolveStructure, resolveTools } from '../utils/zod.ts';
 import {
   runHook,
   runErrorHook,
@@ -528,7 +530,7 @@ async function executeGenerate<TParams>(
   params: TParams | undefined,
   tools: Tool[] | undefined,
   toolStrategy: LLMOptions<TParams>['toolStrategy'],
-  structure: LLMOptions<TParams>['structure'],
+  structure: JSONSchema | undefined,
   history: Message[],
   newMessages: Message[],
   middleware: Middleware[]
@@ -686,7 +688,7 @@ function executeStream<TParams>(
   params: TParams | undefined,
   tools: Tool[] | undefined,
   toolStrategy: LLMOptions<TParams>['toolStrategy'],
-  structure: LLMOptions<TParams>['structure'],
+  structure: JSONSchema | undefined,
   history: Message[],
   newMessages: Message[],
   middleware: Middleware[]
@@ -968,11 +970,15 @@ export function llm<TParams = unknown>(
     config: explicitConfig = {},
     params,
     system,
-    tools,
+    tools: toolsInput,
     toolStrategy,
-    structure,
+    structure: structureInput,
     middleware = [],
   } = options;
+
+  // Resolve Zod schemas to JSONSchema if needed
+  const structure = structureInput ? resolveStructure(structureInput) : undefined;
+  const tools = toolsInput ? resolveTools(toolsInput) : undefined;
 
   // Merge providerConfig from model reference with explicit config
   // Explicit config takes precedence, with headers being deep-merged

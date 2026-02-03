@@ -162,3 +162,61 @@ export interface JSONSchema {
   /** Human-readable description of the schema's purpose */
   description?: string;
 }
+
+/**
+ * Minimal interface for Zod v3 schema detection.
+ * Zod v3 schemas have a `_def` property containing schema definition.
+ */
+export interface ZodV3Like {
+  _def: unknown;
+  parse: (data: unknown) => unknown;
+}
+
+/**
+ * Minimal interface for Zod v4 schema detection.
+ * Zod v4 schemas have a `_zod` property in addition to `_def`.
+ */
+export interface ZodV4Like extends ZodV3Like {
+  _zod: unknown;
+}
+
+/**
+ * Union type representing any Zod-like schema.
+ * Allows accepting Zod schemas without requiring Zod as a direct dependency.
+ */
+export type ZodLike = ZodV3Like | ZodV4Like;
+
+/**
+ * Structure input type that accepts either JSON Schema or Zod schemas.
+ *
+ * When a Zod schema is provided, it will be automatically converted
+ * to JSON Schema before being sent to the provider.
+ *
+ * @example
+ * ```typescript
+ * import { z } from 'zod';
+ *
+ * // Using Zod schema directly
+ * const model = llm({
+ *   model: anthropic('claude-sonnet-4-20250514'),
+ *   structure: z.object({
+ *     name: z.string(),
+ *     age: z.number(),
+ *   }),
+ * });
+ *
+ * // Using JSON Schema
+ * const model = llm({
+ *   model: anthropic('claude-sonnet-4-20250514'),
+ *   structure: {
+ *     type: 'object',
+ *     properties: {
+ *       name: { type: 'string' },
+ *       age: { type: 'number' },
+ *     },
+ *     required: ['name', 'age'],
+ *   },
+ * });
+ * ```
+ */
+export type Structure = JSONSchema | ZodLike;

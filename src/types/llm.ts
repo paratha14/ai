@@ -9,8 +9,8 @@
 
 import type { Message, AssistantMessage } from './messages.ts';
 import type { ContentBlock } from './content.ts';
-import type { Tool, ToolUseStrategy } from './tool.ts';
-import type { JSONSchema } from './schema.ts';
+import type { Tool, ToolInput, ToolUseStrategy } from './tool.ts';
+import type { JSONSchema, Structure } from './schema.ts';
 import type { Turn, TokenUsage } from './turn.ts';
 import type { StreamEvent, StreamResult } from './stream.ts';
 import type { ProviderConfig, LLMProvider, ProviderIdentity } from './provider.ts';
@@ -137,14 +137,14 @@ export interface LLMOptions<TParams = unknown> {
    */
   system?: string | unknown[];
 
-  /** Tools available to the model */
-  tools?: Tool[];
+  /** Tools available to the model (accepts Zod schemas for parameters) */
+  tools?: ToolInput[];
 
   /** Tool execution strategy */
   toolStrategy?: ToolUseStrategy;
 
-  /** Structured output schema (JSON Schema) */
-  structure?: JSONSchema;
+  /** Structured output schema (JSON Schema or Zod schema) */
+  structure?: Structure;
 
   /**
    * Middleware for intercepting and transforming requests, responses, and streams.
