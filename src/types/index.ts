@@ -71,7 +71,6 @@ export {
  */
 export type {
   Tool,
-  ToolInput,
   ToolCall,
   ToolResult,
   ToolMetadata,
