@@ -51,6 +51,7 @@ export type {
   OpenRouterModelOptions,
   OpenRouterModelReference,
   OpenRouterProviderPreferences,
+  OpenRouterProviderOptions,
   OpenRouterEmbedParams,
   OpenRouterImageConfig,
   OpenRouterHeaders,

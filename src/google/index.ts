@@ -47,4 +47,5 @@ export type {
   GoogleCodeExecutionResult,
   GoogleEmbedParams,
   GoogleTaskType,
+  GoogleImagenParams,
 } from '../providers/google/index.ts';

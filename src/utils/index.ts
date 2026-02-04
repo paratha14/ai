@@ -2,7 +2,7 @@
  * Utility functions for UPP
  *
  * Provides helper utilities for working with streaming JSON,
- * Zod schema conversion, and other common operations.
+ * Zod schema conversion, error handling, and ID generation.
  *
  * @packageDocumentation
  */
@@ -18,3 +18,7 @@ export {
   resolveStructure,
   resolveTools,
 } from './zod.ts';
+
+export { toError, isCancelledError } from './error.ts';
+
+export { generateId, generateShortId } from './id.ts';

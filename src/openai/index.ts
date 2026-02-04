@@ -79,4 +79,6 @@ export type {
   OpenAIConversation,
   OpenAIPromptTemplate,
   OpenAIEmbedParams,
+  OpenAIHeaders,
+  OpenAIImageParams,
 } from '../providers/openai/index.ts';

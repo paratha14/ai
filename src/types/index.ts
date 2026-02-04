@@ -71,6 +71,7 @@ export {
  */
 export type {
   Tool,
+  ToolInput,
   ToolCall,
   ToolResult,
   ToolMetadata,
@@ -100,7 +101,7 @@ export type { MessageType, MessageMetadata, MessageOptions } from './messages.ts
  * Turn types representing complete inference results.
  * A Turn encapsulates all messages and metadata from a single inference call.
  */
-export type { Turn, TokenUsage } from './turn.ts';
+export type { Turn, TokenUsage, TurnJSON } from './turn.ts';
 export { createTurn, emptyUsage, aggregateUsage } from './turn.ts';
 
 /**
