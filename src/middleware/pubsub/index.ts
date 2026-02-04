@@ -86,12 +86,14 @@ export function getAdapter(state: Map<string, unknown>): PubSubAdapter | undefin
  * export default defineEventHandler(async (event) => {
  *   const { input, conversationId } = await readBody(event);
  *
- *   // Fire and forget - subscriber connects immediately, events flow when ready
- *   const model = llm({
- *     model: anthropic('claude-sonnet-4-20250514'),
- *     middleware: [pubsubMiddleware({ adapter, streamId: conversationId })],
- *   });
- *   model.stream(input).then(turn => saveToDatabase(turn));
+ *   // Guard: prevent duplicate generations on reconnect
+ *   if (!await adapter.exists(conversationId)) {
+ *     const model = llm({
+ *       model: anthropic('claude-sonnet-4-20250514'),
+ *       middleware: [pubsubMiddleware({ adapter, streamId: conversationId })],
+ *     });
+ *     model.stream(input).then(turn => saveToDatabase(turn));
+ *   }
  *
  *   return h3.streamSubscriber(conversationId, adapter, event);
  * });

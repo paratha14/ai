@@ -21,13 +21,24 @@ export type { PubSubAdapter } from '../types.ts';
  * Server adapters namespace for pub-sub stream resumption.
  *
  * Contains framework-specific adapters for Web API, Express, Fastify, and H3.
+ * Always guard with `adapter.exists()` to prevent duplicate generations on reconnect.
  *
  * @example Web API (Next.js App Router, Bun, Deno)
  * ```typescript
  * import { webapi } from '@providerprotocol/ai/middleware/pubsub/server';
  *
  * export async function POST(req: Request) {
- *   const { streamId } = await req.json();
+ *   const { messages, streamId } = await req.json();
+ *
+ *   // Guard: prevent duplicate generations on reconnect
+ *   if (!await adapter.exists(streamId)) {
+ *     const model = llm({
+ *       model: anthropic('claude-sonnet-4-20250514'),
+ *       middleware: [pubsubMiddleware({ adapter, streamId })],
+ *     });
+ *     model.stream(messages).then(turn => saveToDatabase(turn));
+ *   }
+ *
  *   return new Response(webapi.createSubscriberStream(streamId, adapter), {
  *     headers: { 'Content-Type': 'text/event-stream' },
  *   });
@@ -38,8 +49,18 @@ export type { PubSubAdapter } from '../types.ts';
  * ```typescript
  * import { express } from '@providerprotocol/ai/middleware/pubsub/server';
  *
- * app.post('/api/ai/reconnect', (req, res) => {
- *   const { streamId } = req.body;
+ * app.post('/api/ai', async (req, res) => {
+ *   const { messages, streamId } = req.body;
+ *
+ *   // Guard: prevent duplicate generations on reconnect
+ *   if (!await adapter.exists(streamId)) {
+ *     const model = llm({
+ *       model: anthropic('claude-sonnet-4-20250514'),
+ *       middleware: [pubsubMiddleware({ adapter, streamId })],
+ *     });
+ *     model.stream(messages).then(turn => saveToDatabase(turn));
+ *   }
+ *
  *   express.streamSubscriber(streamId, adapter, res);
  * });
  * ```
@@ -48,8 +69,18 @@ export type { PubSubAdapter } from '../types.ts';
  * ```typescript
  * import { fastify } from '@providerprotocol/ai/middleware/pubsub/server';
  *
- * app.post('/api/ai/reconnect', (request, reply) => {
- *   const { streamId } = request.body;
+ * app.post('/api/ai', async (request, reply) => {
+ *   const { messages, streamId } = request.body;
+ *
+ *   // Guard: prevent duplicate generations on reconnect
+ *   if (!await adapter.exists(streamId)) {
+ *     const model = llm({
+ *       model: anthropic('claude-sonnet-4-20250514'),
+ *       middleware: [pubsubMiddleware({ adapter, streamId })],
+ *     });
+ *     model.stream(messages).then(turn => saveToDatabase(turn));
+ *   }
+ *
  *   return fastify.streamSubscriber(streamId, adapter, reply);
  * });
  * ```
@@ -59,7 +90,17 @@ export type { PubSubAdapter } from '../types.ts';
  * import { h3 } from '@providerprotocol/ai/middleware/pubsub/server';
  *
  * export default defineEventHandler(async (event) => {
- *   const { streamId } = await readBody(event);
+ *   const { messages, streamId } = await readBody(event);
+ *
+ *   // Guard: prevent duplicate generations on reconnect
+ *   if (!await adapter.exists(streamId)) {
+ *     const model = llm({
+ *       model: anthropic('claude-sonnet-4-20250514'),
+ *       middleware: [pubsubMiddleware({ adapter, streamId })],
+ *     });
+ *     model.stream(messages).then(turn => saveToDatabase(turn));
+ *   }
+ *
  *   return h3.streamSubscriber(streamId, adapter, event);
  * });
  * ```

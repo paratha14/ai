@@ -790,22 +790,55 @@ Bun.serve({
 ```typescript
 // Express
 import { express } from '@providerprotocol/ai/middleware/pubsub/server';
-app.post('/api/ai/reconnect', (req, res) => {
-  const { streamId } = req.body;
+
+app.post('/api/ai', async (req, res) => {
+  const { messages, streamId } = req.body;
+
+  // Guard: prevent duplicate generations on reconnect
+  if (!await adapter.exists(streamId)) {
+    const model = llm({
+      model: anthropic('claude-sonnet-4-20250514'),
+      middleware: [pubsubMiddleware({ adapter, streamId })],
+    });
+    model.stream(messages).then(turn => { /* save to DB */ });
+  }
+
   express.streamSubscriber(streamId, adapter, res);
 });
 
 // Fastify
 import { fastify } from '@providerprotocol/ai/middleware/pubsub/server';
-app.post('/api/ai/reconnect', (request, reply) => {
-  const { streamId } = request.body;
+
+app.post('/api/ai', async (request, reply) => {
+  const { messages, streamId } = request.body;
+
+  // Guard: prevent duplicate generations on reconnect
+  if (!await adapter.exists(streamId)) {
+    const model = llm({
+      model: anthropic('claude-sonnet-4-20250514'),
+      middleware: [pubsubMiddleware({ adapter, streamId })],
+    });
+    model.stream(messages).then(turn => { /* save to DB */ });
+  }
+
   return fastify.streamSubscriber(streamId, adapter, reply);
 });
 
 // H3/Nuxt
 import { h3 } from '@providerprotocol/ai/middleware/pubsub/server';
+
 export default defineEventHandler(async (event) => {
-  const { streamId } = await readBody(event);
+  const { messages, streamId } = await readBody(event);
+
+  // Guard: prevent duplicate generations on reconnect
+  if (!await adapter.exists(streamId)) {
+    const model = llm({
+      model: anthropic('claude-sonnet-4-20250514'),
+      middleware: [pubsubMiddleware({ adapter, streamId })],
+    });
+    model.stream(messages).then(turn => { /* save to DB */ });
+  }
+
   return h3.streamSubscriber(streamId, adapter, event);
 });
 ```
