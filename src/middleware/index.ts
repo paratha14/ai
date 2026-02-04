@@ -6,6 +6,7 @@
  * - @providerprotocol/ai/middleware/logging
  * - @providerprotocol/ai/middleware/parsed-object
  * - @providerprotocol/ai/middleware/persistence
+ * - @providerprotocol/ai/middleware/pipeline
  * - @providerprotocol/ai/middleware/pubsub
  * - @providerprotocol/ai/middleware/pubsub/server
  *

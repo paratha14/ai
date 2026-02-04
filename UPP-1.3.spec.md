@@ -647,6 +647,11 @@ Context passed to lifecycle hooks:
 | `state` | Map | Shared state across middleware |
 | `startTime` | Integer | Request start timestamp |
 | `endTime` | Integer? | Request end timestamp |
+| `emit` | Function | Emit a stream event through the middleware pipeline |
+
+**emit(event: StreamEvent) -> void**
+
+Emits a stream event that flows through `onStreamEvent` for all middleware. Useful for middleware that need to emit events after streaming completes (e.g., in `onTurn` hooks). For non-streaming requests, this is a no-op.
 
 ### 10.4 StreamContext
 
@@ -763,6 +768,59 @@ Loads and saves conversation threads around LLM execution.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `adapter` | PersistenceAdapter | (required) | Adapter for loading and saving threads |
+
+**pipelineMiddleware(options)**
+
+Runs post-turn processing stages after LLM completion. Stages execute in `onTurn` and can emit progress events through the middleware pipeline, making them available to any middleware with `onStreamEvent` (such as `pubsubMiddleware`).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `stages` | PipelineStage[] | (required) | Stages to run after turn completion |
+| `parallel` | Boolean | false | Run stages concurrently instead of sequentially |
+| `continueOnError` | Boolean | false | Continue running subsequent stages if one fails |
+| `onStageError` | Function | (none) | Callback when a stage throws an error |
+
+**PipelineStage Interface:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | String | Unique identifier for this stage (used in events) |
+| `run` | Function | `(turn, emit) => Promise<void> \| void` - Execute the stage |
+
+The `run` function receives the completed Turn and an `emit` function for sending progress events. Stages MAY mutate the turn object (via type assertion) to attach computed properties accessible in the `.then()` callback:
+
+```
+// In stage run function
+run: (turn, emit) => {
+  const slug = generateSlug(turn.data.title)
+  turn.slug = slug  // via type assertion
+  emit({ slug })
+}
+
+// Access in .then() callback
+model.stream(prompt).then(turn => {
+  console.log(turn.slug)  // Available!
+})
+```
+
+**Middleware Order:** Place `pipelineMiddleware` AFTER `pubsubMiddleware` in the array. This ensures:
+- `onStart`: pubsub runs first (sets up adapter)
+- `onTurn`: pipeline runs first (emits events), pubsub runs second (cleans up)
+
+**PipelineStageEvent:**
+
+Pipeline stages emit `pipeline_stage` events with the following structure:
+
+```
+{
+  type: "pipeline_stage",
+  index: 0,
+  delta: {
+    stage: String,   // Stage type identifier
+    payload: Any     // Stage output data
+  }
+}
+```
 
 ### 10.8 Type Extensions
 
@@ -1122,10 +1180,13 @@ All providers MUST:
 - **Added** Stream event transformation via `onStreamEvent` hook
 - **Added** Tool execution hooks (`onToolCall`, `onToolResult`)
 - **Added** `MiddlewareContext` and `StreamContext` types for hook parameters
+- **Added** `emit(event)` method to `MiddlewareContext` for middleware to emit events during any hook
 - **Added** Built-in `parsedObjectMiddleware()` for incremental JSON parsing
 - **Added** Built-in `loggingMiddleware()` for request lifecycle logging
 - **Added** Built-in `pubsubMiddleware()` for stream resumption
 - **Added** Built-in `persistenceMiddleware()` for thread persistence
+- **Added** Built-in `pipelineMiddleware()` for post-turn processing stages with event emission
+- **Added** `PipelineStage`, `PipelineStageEvent`, and `PipelineStageDelta` types for pipeline middleware
 - **Added** `ParsedEventDelta` and `ParsedStreamEvent` extended types
 - **Simplified** `StreamContext` to only contain shared `state` map; middleware manage their own accumulation
 - **Breaking** Removed `parsed` field from base `EventDelta` type; use `parsedObjectMiddleware()` for incremental JSON parsing during streaming

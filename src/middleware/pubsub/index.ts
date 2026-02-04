@@ -182,9 +182,10 @@ export function pubsubMiddleware(options: PubSubOptions = {}): Middleware {
       if (!id) {
         return;
       }
-      // Wait for all appends to complete but don't finalize yet
-      // onTurn will be called next with the Turn data
+      // Wait for all stream-phase appends to complete
       await waitForAppends(id);
+      // Clear append state to prevent memory leaks if onTurn is skipped or fails.
+      // Other middleware may emit during onTurn - those get new append chains.
       clearAppendState(id);
       ctx.state.set(STATE_KEY_STREAM_ENDED, true);
     },
@@ -199,6 +200,11 @@ export function pubsubMiddleware(options: PubSubOptions = {}): Middleware {
 
       // Only emit Turn if we were streaming (onStreamEnd was called)
       if (streamEnded) {
+        // Wait for any late appends from other middleware that emitted during onTurn
+        // (e.g., pipeline middleware emits events before pubsub's onTurn runs).
+        // These create new append chains since onStreamEnd cleared the stream-phase chains.
+        await waitForAppends(id);
+        clearAppendState(id);
         // Set the final Turn data so subscribers receive it before completion
         adapter.setFinalData(id, serializeTurn(turn));
         // Now remove the stream (notifies subscribers with final data + completion)

@@ -83,6 +83,9 @@ export type StreamEventType = (typeof StreamEventType)[keyof typeof StreamEventT
  * | `message_stop` | (none) |
  * | `content_block_start` | (none) |
  * | `content_block_stop` | (none) |
+ *
+ * Custom event types (via middleware) may extend EventDelta with additional fields.
+ * See {@link @providerprotocol/ai/middleware/flow!FlowStageDelta} for an example.
  */
 export interface EventDelta {
   /** Incremental text content (text_delta, reasoning_delta, object_delta) */
@@ -130,8 +133,16 @@ export interface EventDelta {
  * ```
  */
 export interface StreamEvent {
-  /** Event type discriminator */
-  type: StreamEventType;
+  /**
+   * Event type discriminator.
+   *
+   * Uses `StreamEventType | (string & Record<never, never>)` to allow custom
+   * event types (like 'flow_stage') while preserving autocomplete for known types.
+   * The `(string & Record<never, never>)` pattern is a TypeScript idiom that
+   * widens the type to accept any string without losing the literal type union
+   * in IDE autocomplete suggestions.
+   */
+  type: StreamEventType | (string & Record<never, never>);
 
   /** Index of the content block this event belongs to */
   index: number;

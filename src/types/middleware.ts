@@ -76,6 +76,15 @@ export interface MiddlewareContext {
 
   /** Request end timestamp in milliseconds (set after completion) */
   endTime?: number;
+
+  /**
+   * Emit a stream event. Events flow through onStreamEvent for all middleware.
+   * Useful for emitting events after streaming completes (e.g., in onTurn hooks).
+   * No-op for non-streaming requests.
+   *
+   * @param event - The stream event to emit
+   */
+  emit(event: StreamEvent): void;
 }
 
 /**

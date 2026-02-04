@@ -133,7 +133,10 @@ export async function runToolHook(
 /**
  * Runs the onTurn hook for all middleware that have it.
  *
- * Turn hooks are run in reverse middleware order.
+ * Turn hooks are run in reverse middleware order. All middleware hooks are
+ * executed even if earlier hooks throw, ensuring cleanup middleware (like pubsub)
+ * always runs. If any hooks throw, the first error is re-thrown after all hooks
+ * complete.
  *
  * @param middlewares - Array of middleware to process
  * @param turn - The completed Turn
@@ -145,10 +148,22 @@ export async function runTurnHook(
   ctx: MiddlewareContext
 ): Promise<void> {
   const ordered = [...middlewares].reverse();
+  let firstError: Error | null = null;
+
   for (const mw of ordered) {
     if (mw.onTurn) {
-      await mw.onTurn.call(mw, turn, ctx);
+      try {
+        await mw.onTurn.call(mw, turn, ctx);
+      } catch (err) {
+        if (!firstError) {
+          firstError = err instanceof Error ? err : new Error(String(err));
+        }
+      }
     }
+  }
+
+  if (firstError) {
+    throw firstError;
   }
 }
 
@@ -239,6 +254,25 @@ export async function runStreamEndHook(
   }
 }
 
+/** No-op emit function for non-streaming contexts */
+const noopEmit = (): void => {};
+
+/**
+ * Mutable emit holder for late-binding emit function.
+ * Allows context to be created before transformer is ready.
+ */
+export interface EmitHolder {
+  fn: MiddlewareContext['emit'];
+}
+
+/**
+ * Creates an emit holder with a no-op default.
+ * Use setEmit() to bind the real emit function after transformer is created.
+ */
+export function createEmitHolder(): EmitHolder {
+  return { fn: noopEmit };
+}
+
 /**
  * Creates a fresh MiddlewareContext for a request.
  *
@@ -247,6 +281,7 @@ export async function runStreamEndHook(
  * @param provider - The provider name
  * @param streaming - Whether this is a streaming request
  * @param request - The request object
+ * @param emitHolder - Optional emit holder for late-binding (defaults to no-op)
  * @returns A new MiddlewareContext
  */
 export function createMiddlewareContext(
@@ -254,7 +289,8 @@ export function createMiddlewareContext(
   modelId: string,
   provider: string,
   streaming: boolean,
-  request: MiddlewareContext['request']
+  request: MiddlewareContext['request'],
+  emitHolder: EmitHolder = { fn: noopEmit }
 ): MiddlewareContext {
   return {
     modality,
@@ -266,6 +302,7 @@ export function createMiddlewareContext(
     state: new Map(),
     startTime: Date.now(),
     endTime: undefined,
+    emit: (event) => emitHolder.fn(event),
   };
 }
 

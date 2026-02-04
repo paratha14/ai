@@ -1,7 +1,7 @@
 # Provider Protocol SDK (UPP) - LLM Reference Guide
 
 **Package**: `@providerprotocol/ai`
-**Version**: 0.0.39
+**Version**: 0.0.40
 **Runtime**: Bun/Node.js (ESM only)
 
 ## Overview
@@ -9,7 +9,7 @@
 Provider Protocol (UPP - Unified Provider Protocol) is a TypeScript SDK that provides a unified API for interacting with multiple AI providers. It eliminates provider fragmentation by offering one consistent interface across 9+ providers and 3 modalities.
 
 **Key Features:**
-- Unified interface for Anthropic, OpenAI, Google, xAI, Groq, Cerebras, Ollama, OpenRouter
+- Unified interface for Anthropic, OpenAI, Google, xAI, Groq, Cerebras, Moonshot, Ollama, OpenRouter
 - Three modalities: LLM inference, embeddings, image generation
 - Full streaming support with event-based API
 - Tool/function calling with automatic execution loops
@@ -97,6 +97,7 @@ import { google } from '@providerprotocol/ai/google';
 import { xai } from '@providerprotocol/ai/xai';
 import { groq } from '@providerprotocol/ai/groq';
 import { cerebras } from '@providerprotocol/ai/cerebras';
+import { moonshot } from '@providerprotocol/ai/moonshot';
 import { ollama } from '@providerprotocol/ai/ollama';
 import { openrouter } from '@providerprotocol/ai/openrouter';
 import { proxy } from '@providerprotocol/ai/proxy';
@@ -117,6 +118,7 @@ The package uses subpath exports to keep bundles small. Import only what you nee
 | `@providerprotocol/ai/xai` | xAI/Grok provider + types |
 | `@providerprotocol/ai/groq` | Groq provider + types |
 | `@providerprotocol/ai/cerebras` | Cerebras provider + types |
+| `@providerprotocol/ai/moonshot` | Moonshot/Kimi provider + types |
 | `@providerprotocol/ai/ollama` | Ollama provider + types |
 | `@providerprotocol/ai/openrouter` | OpenRouter provider + types |
 | `@providerprotocol/ai/proxy` | Proxy provider + server adapters |
@@ -125,12 +127,18 @@ The package uses subpath exports to keep bundles small. Import only what you nee
 | `@providerprotocol/ai/middleware/logging` | Logging middleware |
 | `@providerprotocol/ai/middleware/parsed-object` | Partial JSON parsing middleware |
 | `@providerprotocol/ai/middleware/persistence` | Thread persistence middleware |
+| `@providerprotocol/ai/middleware/pipeline` | Post-turn processing middleware |
 | `@providerprotocol/ai/middleware/pubsub` | Stream resumption middleware + adapters |
 | `@providerprotocol/ai/middleware/pubsub/server` | Server adapters for all frameworks |
 | `@providerprotocol/ai/middleware/pubsub/server/webapi` | Web API adapter (Bun, Deno, Next.js) |
 | `@providerprotocol/ai/middleware/pubsub/server/express` | Express adapter |
 | `@providerprotocol/ai/middleware/pubsub/server/fastify` | Fastify adapter |
 | `@providerprotocol/ai/middleware/pubsub/server/h3` | H3/Nuxt adapter |
+| `@providerprotocol/ai/proxy/server` | Proxy server adapters for all frameworks |
+| `@providerprotocol/ai/proxy/server/webapi` | Proxy Web API adapter (Bun, Deno, Next.js) |
+| `@providerprotocol/ai/proxy/server/express` | Proxy Express adapter |
+| `@providerprotocol/ai/proxy/server/h3` | Proxy H3/Nuxt adapter |
+| `@providerprotocol/ai/proxy/server/fastify` | Proxy Fastify adapter |
 | `@providerprotocol/ai/utils` | Utilities: Zod conversion, partial JSON parsing |
 
 ### Example: Minimal Import
@@ -676,7 +684,7 @@ import express from 'express';
 import { llm } from '@providerprotocol/ai';
 import { anthropic } from '@providerprotocol/ai/anthropic';
 import { parseBody } from '@providerprotocol/ai/proxy';
-import { express as expressAdapter } from '@providerprotocol/ai/proxy';
+import { express as expressAdapter } from '@providerprotocol/ai/proxy/server';
 
 const app = express();
 app.use(express.json());
@@ -705,7 +713,7 @@ import Fastify from 'fastify';
 import { llm } from '@providerprotocol/ai';
 import { anthropic } from '@providerprotocol/ai/anthropic';
 import { parseBody } from '@providerprotocol/ai/proxy';
-import { fastify as fastifyAdapter } from '@providerprotocol/ai/proxy';
+import { fastify as fastifyAdapter } from '@providerprotocol/ai/proxy/server';
 
 const app = Fastify();
 
@@ -731,7 +739,8 @@ app.post('/api/ai', async (request, reply) => {
 import { sendStream } from 'h3';
 import { llm } from '@providerprotocol/ai';
 import { anthropic } from '@providerprotocol/ai/anthropic';
-import { parseBody, h3 as h3Adapter } from '@providerprotocol/ai/proxy';
+import { parseBody } from '@providerprotocol/ai/proxy';
+import { h3 as h3Adapter } from '@providerprotocol/ai/proxy/server';
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event);
@@ -1045,6 +1054,80 @@ const instance = llm({
 });
 ```
 
+### Pipeline Middleware (Post-Turn Processing)
+
+Enables running async tasks (image generation, embedding, slug generation, etc.)
+after the LLM completes, while streaming progress events to connected clients.
+
+```typescript
+import { pipelineMiddleware, isPipelineStageEvent } from '@providerprotocol/ai/middleware/pipeline';
+import { pubsubMiddleware, memoryAdapter } from '@providerprotocol/ai/middleware/pubsub';
+
+const adapter = memoryAdapter();
+
+const instance = llm({
+  model: openai('gpt-4o'),
+  structure: BlogPostSchema,
+  middleware: [
+    // Place pubsub BEFORE pipeline so events are buffered
+    pubsubMiddleware({ adapter, streamId: postId }),
+    pipelineMiddleware({
+      stages: [
+        {
+          type: 'slug',
+          run: async (turn, emit) => {
+            const slug = await generateSlug(turn.data.title);
+            (turn as { slug?: string }).slug = slug;
+            emit({ slug });
+          },
+        },
+        {
+          type: 'embedding',
+          run: async (turn, emit) => {
+            await vectorize(turn.data);
+            emit({ embedded: true });
+          },
+        },
+      ],
+      parallel: false,       // Run stages sequentially (default)
+      continueOnError: false, // Stop on first error (default)
+      onStageError: ({ stage, error }) => {
+        console.error(`Stage ${stage.type} failed:`, error);
+      },
+    }),
+  ],
+});
+
+// Access stage-attached properties in .then()
+instance.stream(prompt).then(turn => {
+  const extended = turn as typeof turn & { slug?: string };
+  console.log('Slug:', extended.slug);
+});
+
+// Listen for pipeline stage events during streaming
+for await (const event of stream) {
+  if (isPipelineStageEvent(event)) {
+    console.log(`Stage ${event.delta.stage}:`, event.delta.payload);
+  }
+}
+```
+
+**Pipeline Middleware Exports:**
+
+| Export | Type | Description |
+|--------|------|-------------|
+| `pipelineMiddleware(config)` | Function | Creates pipeline middleware instance |
+| `pipelineStageEvent(stage, payload)` | Function | Creates a pipeline stage event |
+| `isPipelineStageEvent(event)` | Type Guard | Checks if event is a PipelineStageEvent |
+| `PipelineConfig<TData>` | Interface | Middleware configuration |
+| `PipelineStage<TData>` | Interface | Stage definition |
+| `PipelineStageEvent` | Interface | Stream event for pipeline stages |
+| `PipelineStageDelta` | Interface | Event delta with stage/payload |
+| `PipelineStageError<TData>` | Interface | Error callback details |
+| `PipelineEmit` | Type | Emit function signature |
+
+**Middleware Order**: Place `pipelineMiddleware` **after** `pubsubMiddleware` in the array. This ensures pubsub sets up before pipeline stages execute, and pipeline events emit before pubsub cleanup.
+
 ### Pub/Sub Middleware (Stream Resumption)
 
 Enables clients to reconnect and catch up on missed events during active generation.
@@ -1185,8 +1268,56 @@ const myMiddleware: Middleware = {
     // Transform or filter stream events
     return event;
   },
+
+  async onTurn(turn, ctx) {
+    // Emit custom events that flow through onStreamEvent for all middleware
+    // These are visible to pubsub subscribers and direct stream consumers
+    ctx.emit({
+      type: 'custom_event',
+      index: 0,
+      delta: { data: turn.response.text.length },
+    });
+  },
 };
 ```
+
+**Middleware Hooks:**
+
+| Hook | Description |
+|------|-------------|
+| `onStart(ctx)` | Called when generate/stream starts, before provider execution |
+| `onEnd(ctx)` | Called when generate/stream completes successfully (reverse order) |
+| `onError(error, ctx)` | Called on non-cancellation errors |
+| `onAbort(error, ctx)` | Called when a request is cancelled |
+| `onRequest(ctx)` | Called before provider execution, can modify request |
+| `onResponse(ctx)` | Called after provider execution, can modify response (reverse order) |
+| `onTurn(turn, ctx)` | Called when a complete Turn is assembled (LLM only, reverse order) |
+| `onStreamEvent(event, ctx)` | Transform, filter, or expand stream events |
+| `onStreamEnd(ctx)` | Called after all stream events processed |
+| `onToolCall(tool, params, ctx)` | Called before tool execution |
+| `onToolResult(tool, result, ctx)` | Called after tool execution |
+
+**MiddlewareContext Properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `modality` | `'llm' \| 'embedding' \| 'image'` | The modality being used |
+| `modelId` | `string` | Model ID |
+| `provider` | `string` | Provider name |
+| `streaming` | `boolean` | Whether this is a streaming request |
+| `request` | `AnyRequest` | Request object (mutable for onRequest) |
+| `response` | `AnyResponse` | Response object (populated after execution) |
+| `state` | `Map<string, unknown>` | Shared state across middleware hooks |
+| `startTime` | `number` | Request start timestamp |
+| `endTime` | `number` | Request end timestamp (set after completion) |
+| `emit(event)` | `(StreamEvent) => void` | Emit a stream event to all middleware |
+
+**ctx.emit() Behavior:**
+
+Events emitted via `ctx.emit()` flow through `onStreamEvent` for all middleware and are visible to direct stream consumers. Behavior varies by lifecycle phase:
+
+- **During streaming** (`onStart`, `onRequest`, `onStreamEvent`): Events are queued and yielded after each iteration
+- **Post-streaming** (`onTurn`, `onEnd`): Events stream in real-time via async channel, enabling flow stages to provide live progress
 
 ---
 
@@ -1328,6 +1459,63 @@ const reasoning = llm<CerebrasLLMParams>({
 });
 ```
 
+### Moonshot
+
+```typescript
+import { moonshot, tools } from '@providerprotocol/ai/moonshot';
+import type { MoonshotLLMParams } from '@providerprotocol/ai/moonshot';
+
+// Basic usage with thinking mode (default for kimi-k2.5)
+const instance = llm<MoonshotLLMParams>({
+  model: moonshot('kimi-k2.5'),
+  params: {
+    max_tokens: 4096,
+    temperature: 1.0,  // Recommended for thinking mode
+    thinking: { type: 'enabled' },  // Default
+  },
+});
+
+// Instant mode (disabled thinking) for faster responses
+const instant = llm<MoonshotLLMParams>({
+  model: moonshot('kimi-k2.5'),
+  params: {
+    max_tokens: 1000,
+    temperature: 0.6,  // Recommended for instant mode
+    thinking: { type: 'disabled' },
+  },
+});
+
+// With server-side builtin tools
+const withTools = llm<MoonshotLLMParams>({
+  model: moonshot('kimi-k2.5'),
+  params: {
+    tools: [
+      tools.webSearch(),    // Real-time web search
+      tools.codeRunner(),   // Python execution
+      tools.fetch(),        // URL content extraction
+      tools.convert(),      // Unit conversion
+      tools.date(),         // Date/time processing
+    ],
+  },
+});
+```
+
+**Available Moonshot Server-Side Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `tools.webSearch()` | Real-time internet search |
+| `tools.codeRunner()` | Python execution with matplotlib, pandas |
+| `tools.quickjs()` | JavaScript execution via QuickJS |
+| `tools.fetch()` | URL content fetching with markdown extraction |
+| `tools.convert()` | Unit conversion (length, mass, currency, etc.) |
+| `tools.date()` | Date/time processing and timezone conversion |
+| `tools.base64Encode()` | Base64 encoding |
+| `tools.base64Decode()` | Base64 decoding |
+| `tools.memory()` | Memory storage and retrieval |
+| `tools.rethink()` | Intelligent reasoning/reflection |
+| `tools.randomChoice()` | Random selection with weights |
+
 ---
 
 ## Provider Capability Matrix
@@ -1340,6 +1528,7 @@ const reasoning = llm<CerebrasLLMParams>({
 | xAI | ✓ | | ✓ | ✓ | ✓ | ✓ | ✓ | |
 | Groq | ✓ | | | ✓ | ✓ | ✓ | ✓ | |
 | Cerebras | ✓ | | | ✓ | ✓ | ✓ | | |
+| Moonshot | ✓ | | | ✓ | ✓ | ✓ | ✓ | |
 | Ollama | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | |
 | OpenRouter | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Proxy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -1359,6 +1548,7 @@ GOOGLE_API_KEY=...
 XAI_API_KEY=...
 GROQ_API_KEY=gsk_...
 CEREBRAS_API_KEY=...
+MOONSHOT_API_KEY=sk-...    # or KIMI_API_KEY as fallback
 OPENROUTER_API_KEY=sk-or-...
 # Ollama doesn't require an API key
 ```

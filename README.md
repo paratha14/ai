@@ -29,9 +29,10 @@ console.log(turn.response.text);
 | OpenRouter | `@providerprotocol/ai/openrouter` | ✓ | ✓ | ✓ |
 | Groq | `@providerprotocol/ai/groq` | ✓ | | |
 | Cerebras | `@providerprotocol/ai/cerebras` | ✓ | | |
+| Moonshot | `@providerprotocol/ai/moonshot` | ✓ | | |
 | OpenResponses | `@providerprotocol/ai/responses` | ✓ | | |
 
-API keys are loaded automatically from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `CEREBRAS_API_KEY`, etc.).
+API keys are loaded automatically from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `MOONSHOT_API_KEY`, etc.).
 
 ## LLM
 
@@ -229,6 +230,9 @@ const videoTurn = await gemini.generate([video.toBlock(), 'Describe this video']
 | OpenRouter | ✓ | PDF, Text | ✓ | ✓ |
 | xAI | ✓ | | | |
 | Groq | ✓ | | | |
+| Moonshot | ✓ | | | ✓* |
+
+\* Moonshot video input is experimental.
 
 ## Anthropic Beta Features
 
@@ -842,6 +846,89 @@ const model = llm({
 });
 ```
 
+### Pipeline Middleware (Post-Turn Processing)
+
+Run async tasks (image generation, embeddings, slug creation, etc.) after the LLM completes, with progress events streamed to connected clients:
+
+```typescript
+import { llm } from '@providerprotocol/ai';
+import { anthropic } from '@providerprotocol/ai/anthropic';
+import { pubsubMiddleware, memoryAdapter } from '@providerprotocol/ai/middleware/pubsub';
+import { pipelineMiddleware, isPipelineStageEvent } from '@providerprotocol/ai/middleware/pipeline';
+
+const adapter = memoryAdapter();
+
+const model = llm({
+  model: anthropic('claude-sonnet-4-20250514'),
+  structure: BlogPostSchema,
+  middleware: [
+    pubsubMiddleware({ adapter, streamId: postId }),
+    pipelineMiddleware<BlogPost>({
+      stages: [
+        {
+          type: 'slug',
+          run: (turn, emit) => {
+            const slug = turn.data!.title.toLowerCase().replace(/\s+/g, '-');
+            (turn as { slug?: string }).slug = slug;
+            emit({ slug });
+          },
+        },
+        {
+          type: 'embedding',
+          run: async (turn, emit) => {
+            await vectorize(turn.data!);
+            emit({ embedded: true });
+          },
+        },
+      ],
+      parallel: false,        // Run stages sequentially (default)
+      continueOnError: false, // Stop on first error (default)
+      onStageError: ({ stage, error }) => {
+        console.error(`Stage ${stage.type} failed:`, error);
+      },
+    }),
+  ],
+});
+
+// Stages run after streaming completes
+model.stream(prompt).then(turn => {
+  const extended = turn as typeof turn & { slug?: string };
+  console.log(extended.slug);
+});
+```
+
+**Consuming Pipeline Events:**
+
+```typescript
+for await (const event of model.stream(prompt)) {
+  if (isPipelineStageEvent(event)) {
+    console.log(event.delta.stage, event.delta.payload);
+    // 'slug' { slug: 'my-blog-post' }
+    // 'embedding' { embedded: true }
+  }
+}
+```
+
+**Middleware Order:** Place `pipelineMiddleware` after `pubsubMiddleware` in the array:
+
+```typescript
+middleware: [
+  pubsubMiddleware({ ... }),  // Setup runs first in onStart
+  pipelineMiddleware({ ... }),    // Events run first in onTurn (reverse order)
+]
+```
+
+This ensures pubsub sets up before pipeline stages execute, and pipeline events emit before pubsub cleanup.
+
+**Pipeline Configuration:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `stages` | `PipelineStage[]` | required | Stages to run after turn completion |
+| `parallel` | `boolean` | `false` | Run stages in parallel instead of sequential |
+| `continueOnError` | `boolean` | `false` | Continue running subsequent stages if one fails |
+| `onStageError` | `function` | - | Called when a stage throws an error |
+
 ## Error Handling
 
 All errors are normalized to `UPPError` with consistent error codes:
@@ -1152,6 +1239,85 @@ const model = llm({
 **Capabilities:** Streaming, tool calling, structured output, reasoning parameters.
 
 **Environment:** `CEREBRAS_API_KEY`
+
+## Moonshot
+
+Kimi K2.5 with 256K context, thinking mode, vision, and server-side builtin tools:
+
+```typescript
+import { llm } from '@providerprotocol/ai';
+import { moonshot, tools } from '@providerprotocol/ai/moonshot';
+
+const model = llm({
+  model: moonshot('kimi-k2.5'),
+  params: { max_tokens: 1000 },
+});
+
+const turn = await model.generate('Hello!');
+```
+
+**With thinking mode (default for K2.5):**
+
+```typescript
+const model = llm({
+  model: moonshot('kimi-k2.5'),
+  params: {
+    max_tokens: 2000,
+    temperature: 1.0,
+    thinking: { type: 'enabled' },
+  },
+});
+
+// Response includes reasoning in turn.response.reasoning
+const turn = await model.generate('Solve step by step: 2x + 5 = 13');
+```
+
+**With instant mode (disabled thinking):**
+
+```typescript
+const model = llm({
+  model: moonshot('kimi-k2.5'),
+  params: {
+    temperature: 0.6,
+    thinking: { type: 'disabled' },
+  },
+});
+```
+
+**With builtin tools:**
+
+```typescript
+const model = llm({
+  model: moonshot('kimi-k2.5'),
+  params: {
+    tools: [
+      tools.webSearch(),
+      tools.codeRunner(),
+      tools.date(),
+    ],
+  },
+});
+```
+
+**Available Builtin Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `tools.webSearch()` | Real-time internet search |
+| `tools.codeRunner()` | Python code execution with matplotlib/pandas |
+| `tools.quickjs()` | JavaScript execution via QuickJS engine |
+| `tools.fetch()` | URL content fetching with markdown extraction |
+| `tools.convert()` | Unit conversion (length, mass, temperature, currency) |
+| `tools.date()` | Date/time processing and timezone conversion |
+| `tools.base64Encode()` | Base64 encoding |
+| `tools.base64Decode()` | Base64 decoding |
+| `tools.memory()` | Memory storage and retrieval system |
+| `tools.rethink()` | Intelligent reasoning/reflection tool |
+| `tools.randomChoice()` | Random selection with optional weights |
+
+**Capabilities:** Streaming, tool calling, structured output, thinking mode, image input, video input (experimental).
+
+**Environment:** `MOONSHOT_API_KEY` or `KIMI_API_KEY`
 
 ## OpenResponses Provider
 

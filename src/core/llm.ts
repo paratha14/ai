@@ -58,6 +58,7 @@ import {
   createStreamTransformer,
   createMiddlewareContext,
   createStreamContext,
+  createEmitHolder,
 } from '../middleware/runner.ts';
 
 /** Default maximum iterations for the tool execution loop */
@@ -714,25 +715,99 @@ function executeStream<TParams>(
     config,
   };
 
+  // Create emit holder for late-binding after transformer is ready
+  const emitHolder = createEmitHolder();
   const ctx = createMiddlewareContext(
     'llm',
     model.modelId,
     model.provider.name,
     true,
-    initialRequest
+    initialRequest,
+    emitHolder
   );
 
   const streamCtx = createStreamContext(ctx.state);
   const transformer = createStreamTransformer(middleware, streamCtx);
 
-  let resolveGenerator: () => void;
+  // Async channel for late events emitted during post-stream hooks.
+  // Events are streamed in real-time as they're emitted, not buffered.
+  const lateEventQueue: StreamEvent[] = [];
+  let lateEventResolver: ((done: boolean) => void) | null = null;
+  let lateEventsActive = false;
+  let lateEventsClosed = false;
+
+  const pushLateEvent = (event: StreamEvent): void => {
+    if (lateEventsClosed) return;
+    lateEventQueue.push(event);
+    if (lateEventResolver) {
+      const resolver = lateEventResolver;
+      lateEventResolver = null;
+      resolver(false);
+    }
+  };
+
+  const closeLateEvents = (): void => {
+    lateEventsClosed = true;
+    if (lateEventResolver) {
+      lateEventResolver(true);
+      lateEventResolver = null;
+    }
+  };
+
+  const waitForLateEvent = (): Promise<boolean> => {
+    if (lateEventQueue.length > 0) {
+      return Promise.resolve(false);
+    }
+    if (lateEventsClosed) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      lateEventResolver = resolve;
+    });
+  };
+
+  // Queue for events emitted during the streaming phase (onStart, onRequest, provider stream, tools)
+  const inlineEventQueue: StreamEvent[] = [];
+
+  // Wire up emit to flow through onStreamEvent pipeline for all middleware.
+  // During streaming: events queued in inlineEventQueue for yielding after each iteration.
+  // During post-stream hooks: events pushed to late event channel for real-time streaming.
+  emitHolder.fn = (event: StreamEvent) => {
+    const result = transformer(event);
+    if (result === null) return;
+
+    if (lateEventsActive) {
+      // Post-stream phase: push to async channel for real-time delivery
+      if (Array.isArray(result)) {
+        for (const e of result) pushLateEvent(e);
+      } else {
+        pushLateEvent(result);
+      }
+    } else {
+      // Streaming phase: queue for yielding after current iteration
+      if (Array.isArray(result)) {
+        inlineEventQueue.push(...result);
+      } else {
+        inlineEventQueue.push(result);
+      }
+    }
+  };
+
+  // Helper to yield all queued inline events
+  function* drainInlineEvents(): Generator<StreamEvent> {
+    while (inlineEventQueue.length > 0) {
+      yield inlineEventQueue.shift()!;
+    }
+  }
+
+  let resolveGenerator: (turn: Turn) => void;
   let rejectGenerator: (error: Error) => void;
   let generatorSettled = false;
-  const generatorDone = new Promise<void>((resolve, reject) => {
-    resolveGenerator = () => {
+  const generatorDone = new Promise<Turn>((resolve, reject) => {
+    resolveGenerator = (turn: Turn) => {
       if (!generatorSettled) {
         generatorSettled = true;
-        resolve();
+        resolve(turn);
       }
     };
     rejectGenerator = (error: Error) => {
@@ -770,7 +845,9 @@ function executeStream<TParams>(
 
       // Run middleware start and request hooks
       await runHook(middleware, 'onStart', ctx);
+      yield* drainInlineEvents();
       await runHook(middleware, 'onRequest', ctx);
+      yield* drainInlineEvents();
       allMessages = (ctx.request as LLMRequest<TParams>).messages;
       const requestMessageCount = allMessages.length;
       const overrideIndex = ctx.state.get(TURN_START_INDEX_KEY);
@@ -811,6 +888,8 @@ function executeStream<TParams>(
           } else {
             yield transformed;
           }
+          // Yield any events emitted by middleware during onStreamEvent
+          yield* drainInlineEvents();
         }
 
         const response = await streamResult.response;
@@ -859,6 +938,8 @@ function executeStream<TParams>(
             } else {
               yield transformed;
             }
+            // Yield any events emitted by middleware during tool hooks
+            yield* drainInlineEvents();
           }
 
           allMessages.push(new ToolResultMessage(results));
@@ -869,11 +950,65 @@ function executeStream<TParams>(
         break;
       }
 
-      // Run stream end hooks
-      await runStreamEndHook(middleware, streamCtx);
+      // Enable late event streaming for all post-stream hooks so middleware can emit
+      // events from onStreamEnd, onResponse, onTurn, or onEnd and have them yielded in real-time
+      lateEventsActive = true;
+
+      // Run post-stream hooks in background while streaming emitted events in real-time
+      let hooksTurn: Turn | null = null;
+      let hooksError: Error | null = null;
+
+      const hooksPromise = (async () => {
+        try {
+          await runStreamEndHook(middleware, streamCtx);
+
+          const data = structure ? structuredData : undefined;
+          const turn = createTurn(
+            allMessages.slice(turnStartIndex),
+            toolExecutions,
+            aggregateUsage(usages),
+            cycles,
+            data
+          );
+
+          ctx.response = {
+            message: turn.response,
+            usage: turn.usage,
+            stopReason: 'end_turn',
+            data,
+          };
+          ctx.endTime = Date.now();
+          await runHook(middleware, 'onResponse', ctx, true);
+          await runTurnHook(middleware, turn, ctx);
+          await runHook(middleware, 'onEnd', ctx, true);
+
+          hooksTurn = turn;
+        } catch (err) {
+          hooksError = err instanceof Error ? err : new Error(String(err));
+        } finally {
+          lateEventsActive = false;
+          closeLateEvents();
+        }
+      })();
+
+      // Stream late events in real-time as they're emitted during hooks
+      while (true) {
+        const done = await waitForLateEvent();
+        if (done) break;
+        while (lateEventQueue.length > 0) {
+          yield lateEventQueue.shift()!;
+        }
+      }
+
+      // Wait for hooks to complete (should already be done since channel is closed)
+      await hooksPromise;
+
+      if (hooksError !== null) {
+        throw toError(hooksError);
+      }
 
       generatorCompleted = true;
-      resolveGenerator();
+      resolveGenerator(hooksTurn!);
     } catch (error) {
       const err = toError(error);
       generatorError = err;
@@ -899,35 +1034,8 @@ function executeStream<TParams>(
   }
 
   const createTurnPromise = async (): Promise<Turn> => {
-    await generatorDone;
-
-    if (generatorError) {
-      throw generatorError;
-    }
-
-    const data = structure ? structuredData : undefined;
-
-    const turn = createTurn(
-      allMessages.slice(turnStartIndex),
-      toolExecutions,
-      aggregateUsage(usages),
-      cycles,
-      data
-    );
-
-    // Set response and run end hooks
-    ctx.response = {
-      message: turn.response,
-      usage: turn.usage,
-      stopReason: 'end_turn',
-      data,
-    };
-    ctx.endTime = Date.now();
-    await runHook(middleware, 'onResponse', ctx, true);
-    await runTurnHook(middleware, turn, ctx);
-    await runHook(middleware, 'onEnd', ctx, true);
-
-    return turn;
+    // Turn is assembled and hooks run inside the generator so late events can be yielded
+    return generatorDone;
   };
 
   return createStreamResult(generateStream(), createTurnPromise, abortController);
