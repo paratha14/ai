@@ -92,10 +92,10 @@
       "import": "./dist/middleware/persistence/index.js",
       "default": "./dist/middleware/persistence/index.js"
     },
-    "./middleware/flow": {
-      "types": "./dist/middleware/flow/index.d.ts",
-      "import": "./dist/middleware/flow/index.js",
-      "default": "./dist/middleware/flow/index.js"
+    "./middleware/pipeline": {
+      "types": "./dist/middleware/pipeline/index.d.ts",
+      "import": "./dist/middleware/pipeline/index.js",
+      "default": "./dist/middleware/pipeline/index.js"
     },
     "./middleware/pubsub": {
       "types": "./dist/middleware/pubsub/index.d.ts",
