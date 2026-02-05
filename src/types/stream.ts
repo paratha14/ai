@@ -44,6 +44,8 @@ export const StreamEventType = {
   ToolExecutionStart: 'tool_execution_start',
   /** Tool execution has completed */
   ToolExecutionEnd: 'tool_execution_end',
+  /** Stream is being retried after an error */
+  StreamRetry: 'stream_retry',
   /** Beginning of a message */
   MessageStart: 'message_start',
   /** End of a message */
@@ -79,6 +81,7 @@ export type StreamEventType = (typeof StreamEventType)[keyof typeof StreamEventT
  * | `tool_call_delta` | `toolCallId`, `toolName`, `argumentsJson` |
  * | `tool_execution_start` | `toolCallId`, `toolName`, `timestamp` |
  * | `tool_execution_end` | `toolCallId`, `toolName`, `result`, `isError`, `timestamp` |
+ * | `stream_retry` | `attempt`, `maxAttempts`, `error`, `timestamp` |
  * | `message_start` | (none) |
  * | `message_stop` | (none) |
  * | `content_block_start` | (none) |
@@ -109,8 +112,17 @@ export interface EventDelta {
   /** Whether tool execution resulted in an error (tool_execution_end) */
   isError?: boolean;
 
-  /** Timestamp in milliseconds (tool_execution_start/end) */
+  /** Timestamp in milliseconds (tool_execution_start/end, stream_retry) */
   timestamp?: number;
+
+  /** Current retry attempt number (stream_retry, 1-indexed) */
+  attempt?: number;
+
+  /** Maximum number of retry attempts configured (stream_retry) */
+  maxAttempts?: number;
+
+  /** Error that triggered the retry (stream_retry) - serialized for JSON transport */
+  error?: { message: string; code?: string };
 }
 
 /**
@@ -434,5 +446,39 @@ export function toolExecutionEnd(
     type: StreamEventType.ToolExecutionEnd,
     index,
     delta: { toolCallId, toolName, result, isError, timestamp },
+  };
+}
+
+/**
+ * Creates a stream retry event.
+ *
+ * Emitted when a streaming request is being retried after an error.
+ * This allows consumers to reset UI state or notify users of retry attempts.
+ *
+ * @param attempt - Current retry attempt number (1-indexed)
+ * @param maxAttempts - Maximum number of retry attempts configured
+ * @param error - The error that triggered the retry
+ * @param timestamp - Timestamp in milliseconds when retry was initiated
+ * @returns A stream_retry StreamEvent
+ */
+export function streamRetry(
+  attempt: number,
+  maxAttempts: number,
+  error: Error,
+  timestamp: number
+): StreamEvent {
+  // Serialize error for JSON transport (Error properties are non-enumerable)
+  const serializedError: { message: string; code?: string } = {
+    message: error.message,
+  };
+  // Include error code if present (e.g., UPPError)
+  if ('code' in error && typeof error.code === 'string') {
+    serializedError.code = error.code;
+  }
+
+  return {
+    type: StreamEventType.StreamRetry,
+    index: 0,
+    delta: { attempt, maxAttempts, error: serializedError, timestamp },
   };
 }

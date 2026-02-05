@@ -237,11 +237,14 @@ interface KeyStrategy {
 
 ```
 interface RetryStrategy {
+  readonly maxAttempts?: Integer
   onRetry(error: UPPError, attempt: Integer): Integer | null | Promise
   beforeRequest?(): Integer | Promise<Integer>
   reset?(): void
 }
 ```
+
+The `maxAttempts` property indicates the maximum number of retry attempts the strategy allows. Used for `stream_retry` events so consumers know retry progress.
 
 The `onRetry` method MUST return delay in milliseconds before retry, or `null` to stop retrying.
 
@@ -575,7 +578,18 @@ Streaming returns a `StreamResult`:
 
 **StreamEventType Values:**
 
-`text_delta`, `reasoning_delta`, `image_delta`, `audio_delta`, `video_delta`, `object_delta`, `tool_call_delta`, `tool_execution_start`, `tool_execution_end`, `message_start`, `message_stop`, `content_block_start`, `content_block_stop`
+`text_delta`, `reasoning_delta`, `image_delta`, `audio_delta`, `video_delta`, `object_delta`, `tool_call_delta`, `tool_execution_start`, `tool_execution_end`, `message_start`, `message_stop`, `content_block_start`, `content_block_stop`, `stream_retry`
+
+**stream_retry Event:**
+
+Emitted when a streaming request encounters a retryable error and will retry. The `delta` object contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `attempt` | Integer | Current retry attempt number (1-indexed) |
+| `maxAttempts` | Integer | Maximum retry attempts configured |
+| `error` | Object | Serialized error with `message` and optional `code` |
+| `timestamp` | Integer | Timestamp in milliseconds |
 
 ### 9.3 Usage
 
@@ -625,6 +639,7 @@ claude = llm({
 | `onEnd` | Function | No | Called when generate/stream completes |
 | `onError` | Function | No | Called on non-cancellation errors |
 | `onAbort` | Function | No | Called when a request is cancelled |
+| `onRetry` | Function | No | Called before retrying after a retryable error |
 | `onRequest` | Function | No | Called before provider execution |
 | `onResponse` | Function | No | Called after provider execution |
 | `onTurn` | Function | No | Called when a complete Turn is assembled (LLM only) |
@@ -702,7 +717,13 @@ generate() / stream() called
 │  onEnd (all middleware, reverse order)  │
 └─────────────────────────────────────────┘
     │
-    ▼ (on error at any point)
+    ▼ (on retryable error during streaming)
+┌─────────────────────────────────────────┐
+│  onRetry (all middleware, in order)     │
+│  └─ Reset state for retry attempt       │
+└─────────────────────────────────────────┘
+    │
+    ▼ (on non-retryable error)
 ┌─────────────────────────────────────────┐
 │  onError (all middleware that have it)  │
 └─────────────────────────────────────────┘
@@ -1174,10 +1195,17 @@ All providers MUST:
 
 ## Changelog
 
+### 1.3.2
+
+- **Added** `stream_retry` event type for streaming retry notifications
+- **Added** `onRetry` middleware hook called before retry attempts
+- **Added** `maxAttempts` property to `RetryStrategy` interface
+- **Added** Streaming retry support with abort-aware delays and tool-loop state preservation
+
 ### 1.3.1
 
 - **Added** Middleware system (Section 10) with composable request/response/stream interception
-- **Added** `Middleware` interface with lifecycle hooks (`onStart`, `onEnd`, `onRequest`, `onResponse`, `onError`, `onAbort`, `onTurn`)
+- **Added** `Middleware` interface with lifecycle hooks (`onStart`, `onEnd`, `onRequest`, `onResponse`, `onError`, `onAbort`, `onRetry`, `onTurn`)
 - **Added** Stream event transformation via `onStreamEvent` hook
 - **Added** Tool execution hooks (`onToolCall`, `onToolResult`)
 - **Added** `MiddlewareContext` and `StreamContext` types for hook parameters

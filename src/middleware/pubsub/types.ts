@@ -96,6 +96,20 @@ export interface PubSubAdapter {
    * Notifies subscribers and removes stream from storage.
    */
   remove(streamId: string): Promise<void>;
+
+  /**
+   * Clears all events for a stream without removing it.
+   * Used during retry to reset accumulated state.
+   */
+  clear(streamId: string): Promise<void>;
+
+  /**
+   * Gets the current cursor base for a stream.
+   * After a clear, cursor base increases so new events have higher cursors
+   * than any events sent before the clear.
+   * @returns Cursor base, or 0 if stream doesn't exist or hasn't been cleared
+   */
+  getCursorBase(streamId: string): number;
 }
 
 /**

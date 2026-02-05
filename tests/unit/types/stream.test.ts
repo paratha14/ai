@@ -10,6 +10,7 @@ import {
   contentBlockStop,
   toolExecutionStart,
   toolExecutionEnd,
+  streamRetry,
 } from '../../../src/types/stream.ts';
 
 describe('Stream event creators', () => {
@@ -186,6 +187,53 @@ describe('Stream event creators', () => {
       const event = toolExecutionEnd('call_undef', 'voidFunction', undefined, false, timestamp);
 
       expect(event.delta.result).toBeUndefined();
+    });
+  });
+
+  describe('streamRetry', () => {
+    test('creates stream retry event', () => {
+      const timestamp = Date.now();
+      const error = new Error('Connection timeout');
+      const event = streamRetry(1, 3, error, timestamp);
+
+      expect(event.type).toBe(StreamEventType.StreamRetry);
+      expect(event.index).toBe(0);
+      expect(event.delta.attempt).toBe(1);
+      expect(event.delta.maxAttempts).toBe(3);
+      expect(event.delta.error?.message).toBe('Connection timeout');
+      expect(event.delta.timestamp).toBe(timestamp);
+    });
+
+    test('handles different attempt numbers', () => {
+      const timestamp = Date.now();
+      const error = new Error('Rate limited');
+      const event = streamRetry(2, 5, error, timestamp);
+
+      expect(event.delta.attempt).toBe(2);
+      expect(event.delta.maxAttempts).toBe(5);
+    });
+
+    test('serializes error for JSON transport', () => {
+      const timestamp = 1704067200000;
+      const error = new Error('API unavailable');
+      const event = streamRetry(3, 3, error, timestamp);
+
+      // Error is serialized to a plain object (not Error instance)
+      expect(event.delta.error?.message).toBe('API unavailable');
+      // JSON.stringify should now work correctly
+      const json = JSON.stringify(event);
+      const parsed = JSON.parse(json);
+      expect(parsed.delta.error.message).toBe('API unavailable');
+    });
+
+    test('includes error code when present', () => {
+      // Create an error-like object with a code property (like UPPError)
+      const error = Object.assign(new Error('Rate limit exceeded'), { code: 'RATE_LIMITED' });
+      const timestamp = Date.now();
+      const event = streamRetry(1, 3, error, timestamp);
+
+      expect(event.delta.error?.message).toBe('Rate limit exceeded');
+      expect(event.delta.error?.code).toBe('RATE_LIMITED');
     });
   });
 });

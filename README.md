@@ -617,6 +617,8 @@ noRetry()
 
 **Retryable Errors:** `RATE_LIMITED`, `NETWORK_ERROR`, `TIMEOUT`, `PROVIDER_ERROR`
 
+**Streaming Retry:** Retry strategies work with both `.generate()` and `.stream()`. During streaming, `stream_retry` events are emitted to notify consumers of retry attempts, and middleware can use the `onRetry` hook to reset accumulated state.
+
 ## Tool Execution Control
 
 ```typescript

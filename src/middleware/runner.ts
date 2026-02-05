@@ -104,6 +104,36 @@ export async function runAbortHook(
 }
 
 /**
+ * Runs the onRetry hook for all middleware that have it.
+ *
+ * Retry hooks are run in forward order before each retry attempt.
+ * Allows middleware to reset state or perform cleanup.
+ * Errors from retry hooks are logged but not re-thrown.
+ *
+ * @param middlewares - Array of middleware to process
+ * @param attempt - The retry attempt number (1-indexed)
+ * @param error - The error that triggered the retry
+ * @param ctx - The middleware context
+ */
+export async function runRetryHook(
+  middlewares: Middleware[],
+  attempt: number,
+  error: Error,
+  ctx: MiddlewareContext
+): Promise<void> {
+  for (const mw of middlewares) {
+    if (mw.onRetry) {
+      try {
+        await mw.onRetry(attempt, error, ctx);
+      } catch (hookError) {
+        // Log but don't throw - retry hooks should not cause additional failures
+        console.error(`[${mw.name}] Error in onRetry hook:`, hookError);
+      }
+    }
+  }
+}
+
+/**
  * Runs tool hooks (onToolCall or onToolResult) for all middleware.
  *
  * Tool hooks are run in forward order for onToolCall and allow middleware

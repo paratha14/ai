@@ -136,13 +136,16 @@ export async function runSubscriberStream(
 
     try {
       const events = await adapter.getEvents(streamId);
+      const cursorBase = adapter.getCursorBase(streamId);
 
       for (const event of events) {
         if (signal?.aborted) break;
         writer.write(formatSSE(event));
       }
 
-      lastSentCursor = events.length - 1;
+      // Use cursor base to set lastSentCursor correctly after clear operations
+      // Events have cursors of cursorBase + index, so after replay the last cursor is cursorBase + length - 1
+      lastSentCursor = cursorBase + events.length - 1;
       dropReplayDuplicates();
 
       if (signal?.aborted) {

@@ -34,6 +34,8 @@ interface StreamEntry {
   stream: MutableStoredStream;
   subscribers: Set<Subscriber>;
   finalData?: unknown;
+  /** Cursor offset incremented on clear to ensure new events have higher cursors */
+  cursorBase: number;
 }
 
 /**
@@ -81,6 +83,7 @@ export function memoryAdapter(options: MemoryAdapterOptions = {}): PubSubAdapter
           events: [],
         },
         subscribers: new Set(),
+        cursorBase: 0,
       };
       streams.set(streamId, entry);
     }
@@ -95,7 +98,8 @@ export function memoryAdapter(options: MemoryAdapterOptions = {}): PubSubAdapter
     async append(streamId, event): Promise<void> {
       const entry = getOrCreate(streamId);
       entry.stream.events.push(event);
-      eventCursors.set(event, entry.stream.events.length - 1);
+      // Use cursorBase to ensure cursors increase monotonically across clears
+      eventCursors.set(event, entry.cursorBase + entry.stream.events.length - 1);
     },
 
     async getEvents(streamId): Promise<StreamEvent[]> {
@@ -119,7 +123,8 @@ export function memoryAdapter(options: MemoryAdapterOptions = {}): PubSubAdapter
         return;
       }
 
-      const cursor = eventCursors.get(event) ?? entry.stream.events.length - 1;
+      // Cursor is stored in eventCursors with cursorBase already applied
+      const cursor = eventCursors.get(event) ?? (entry.cursorBase + entry.stream.events.length - 1);
       for (const subscriber of entry.subscribers) {
         scheduleCallback(() => {
           subscriber.onEvent(event, cursor);
@@ -147,6 +152,22 @@ export function memoryAdapter(options: MemoryAdapterOptions = {}): PubSubAdapter
         }
         streams.delete(streamId);
       }
+    },
+
+    async clear(streamId): Promise<void> {
+      const entry = streams.get(streamId);
+      if (entry) {
+        // Increment cursor base so new events have higher cursors than cleared events
+        // This ensures subscribers don't skip events after a retry
+        entry.cursorBase += entry.stream.events.length;
+        entry.stream.events = [];
+        entry.finalData = undefined;
+      }
+    },
+
+    getCursorBase(streamId): number {
+      const entry = streams.get(streamId);
+      return entry?.cursorBase ?? 0;
     },
   };
 }

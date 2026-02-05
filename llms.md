@@ -476,6 +476,43 @@ for await (const event of stream) {
 const turn = await stream.turn;
 ```
 
+### Streaming Retry Events
+
+When streaming with a retry strategy, `stream_retry` events are emitted on retryable errors:
+
+```typescript
+import { StreamEventType } from '@providerprotocol/ai';
+import { exponentialBackoff } from '@providerprotocol/ai/http';
+
+const instance = llm({
+  model: anthropic('claude-sonnet-4-20250514'),
+  config: {
+    retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
+  },
+});
+
+const stream = instance.stream('Hello');
+
+for await (const event of stream) {
+  if (event.type === StreamEventType.StreamRetry) {
+    console.log(`Retry attempt ${event.delta.attempt}/${event.delta.maxAttempts}`);
+    console.log(`Error: ${event.delta.error?.message}`);
+    // Clear any accumulated state for the retry
+  }
+}
+```
+
+Middleware can use the `onRetry` hook to reset accumulated state:
+
+```typescript
+const middleware: Middleware = {
+  name: 'buffer-clearer',
+  onRetry(attempt, error, ctx) {
+    ctx.state.delete('buffer'); // Clear accumulated data
+  },
+};
+```
+
 ### Abort Streaming
 
 ```typescript
@@ -918,27 +955,39 @@ const instance3 = llm({
 ### Retry Strategies
 
 ```typescript
-import { llm, exponentialBackoff, linearBackoff } from '@providerprotocol/ai';
+import { llm } from '@providerprotocol/ai';
+import { exponentialBackoff, linearBackoff, noRetry } from '@providerprotocol/ai/http';
 
 const instance = llm({
   model: anthropic('claude-sonnet-4-20250514'),
   config: {
     retryStrategy: exponentialBackoff({
-      maxAttempts: 3,
-      baseDelay: 1000,
-      maxDelay: 30000,
+      maxAttempts: 3,     // Maximum retry attempts
+      baseDelay: 1000,    // Initial delay in ms
+      maxDelay: 30000,    // Maximum delay cap
+      jitter: true,       // Add randomness to delays (default: true)
     }),
   },
 });
 
-// Or use linearBackoff for fixed delays
+// Linear backoff: delay increases by fixed amount
 const instance2 = llm({
   model: openai('gpt-4o'),
   config: {
     retryStrategy: linearBackoff({ maxAttempts: 3, delay: 1000 }),
   },
 });
+
+// Disable retries
+const instance3 = llm({
+  model: openai('gpt-4o'),
+  config: {
+    retryStrategy: noRetry(),
+  },
+});
 ```
+
+Retry strategies expose `maxAttempts` for use in `stream_retry` events and custom middleware.
 
 ### Custom Base URL
 
@@ -1370,6 +1419,7 @@ const myMiddleware: Middleware = {
 | `onEnd(ctx)` | Called when generate/stream completes successfully (reverse order) |
 | `onError(error, ctx)` | Called on non-cancellation errors |
 | `onAbort(error, ctx)` | Called when a request is cancelled |
+| `onRetry(attempt, error, ctx)` | Called before retrying after a retryable error (streaming only) |
 | `onRequest(ctx)` | Called before provider execution, can modify request |
 | `onResponse(ctx)` | Called after provider execution, can modify response (reverse order) |
 | `onTurn(turn, ctx)` | Called when a complete Turn is assembled (LLM only, reverse order) |

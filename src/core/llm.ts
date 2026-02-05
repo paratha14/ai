@@ -11,6 +11,7 @@ import type {
   LLMOptions,
   LLMInstance,
   LLMRequest,
+  LLMStreamResult,
   InferenceInput,
   BoundLLMModel,
   LLMCapabilities,
@@ -45,13 +46,16 @@ import {
   createStreamResult,
   toolExecutionStart,
   toolExecutionEnd,
+  streamRetry,
 } from '../types/stream.ts';
+import { noRetry } from '../http/retry.ts';
 import { toError, isCancelledError } from '../utils/error.ts';
 import { resolveStructure, resolveTools } from '../utils/zod.ts';
 import {
   runHook,
   runErrorHook,
   runAbortHook,
+  runRetryHook,
   runToolHook,
   runTurnHook,
   runStreamEndHook,
@@ -825,6 +829,14 @@ function executeStream<TParams>(
 
   const maxIterations = toolStrategy?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
 
+  // Initialize retry strategy
+  const strategy = (config.retryStrategy ?? noRetry())();
+  const strategyMaxAttempts = strategy.maxAttempts ?? 0;
+  let attempt = 1;
+
+  // Messages snapshot for retry reset (captured after onRequest runs)
+  let retryMessages: Message[] = [];
+
   const onAbort = () => {
     const error = new UPPError('Stream cancelled', ErrorCode.Cancelled, model.provider.name, ModalityType.LLM);
     generatorError = error;
@@ -860,77 +872,158 @@ function executeStream<TParams>(
       );
       validateMediaCapabilities(allMessages, model.capabilities, model.provider.name);
 
-      while (cycles < maxIterations + 1) {
-        cycles++;
-        ensureNotAborted();
+      // Store turnStartIndex for retry reset
+      const retryTurnStartIndex = turnStartIndex;
 
-        const request: LLMRequest<TParams> = {
-          messages: allMessages,
-          system,
-          params,
-          tools,
-          structure,
-          config,
-          signal: abortController.signal,
-        };
+      // Retry loop for streaming errors
+      let lastStreamResult: LLMStreamResult | undefined;
+      retryLoop: while (true) {
+        try {
+          while (cycles < maxIterations + 1) {
+            cycles++;
+            ensureNotAborted();
 
-        const streamResult = model.stream(request);
+            // Snapshot state at start of each cycle for retry reset
+            // This preserves tool-loop progress so retries only replay the current cycle
+            retryMessages = [...allMessages];
 
-        for await (const event of streamResult) {
-          ensureNotAborted();
-          // Apply middleware stream transformer
-          const transformed = transformer(event);
-          if (transformed === null) continue;
-          if (Array.isArray(transformed)) {
-            for (const e of transformed) {
-              yield e;
+            // Invoke beforeRequest for rate-limiting/pre-emptive delays (abort-aware)
+            if (strategy.beforeRequest) {
+              const beforeDelay = await strategy.beforeRequest();
+              if (beforeDelay > 0) {
+                await new Promise<void>((resolve, reject) => {
+                  const timeoutId = setTimeout(resolve, beforeDelay);
+                  const handleBeforeAbort = () => {
+                    clearTimeout(timeoutId);
+                    reject(new UPPError('Stream cancelled', ErrorCode.Cancelled, model.provider.name, ModalityType.LLM));
+                  };
+                  if (abortController.signal.aborted) {
+                    clearTimeout(timeoutId);
+                    reject(new UPPError('Stream cancelled', ErrorCode.Cancelled, model.provider.name, ModalityType.LLM));
+                  } else {
+                    abortController.signal.addEventListener('abort', handleBeforeAbort, { once: true });
+                  }
+                });
+              }
             }
-          } else {
-            yield transformed;
-          }
-          // Yield any events emitted by middleware during onStreamEvent
-          yield* drainInlineEvents();
-        }
 
-        const response = await streamResult.response;
-        usages.push(response.usage);
-        allMessages.push(response.message);
+            const request: LLMRequest<TParams> = {
+              messages: allMessages,
+              system,
+              params,
+              tools,
+              structure,
+              config,
+              signal: abortController.signal,
+            };
 
-        if (response.data !== undefined) {
-          structuredData = response.data;
-        }
+            const streamResult = model.stream(request);
+            lastStreamResult = streamResult;
 
-        if (response.message.hasToolCalls && tools && tools.length > 0) {
-          if (response.data !== undefined) {
+            for await (const event of streamResult) {
+              ensureNotAborted();
+              // Apply middleware stream transformer
+              const transformed = transformer(event);
+              if (transformed === null) continue;
+              if (Array.isArray(transformed)) {
+                for (const e of transformed) {
+                  yield e;
+                }
+              } else {
+                yield transformed;
+              }
+              // Yield any events emitted by middleware during onStreamEvent
+              yield* drainInlineEvents();
+            }
+
+            const response = await streamResult.response;
+
+            // Reset retry state after successful stream (prevents state bleed across tool-loop cycles)
+            attempt = 1;
+            strategy.reset?.();
+
+            usages.push(response.usage);
+            allMessages.push(response.message);
+
+            if (response.data !== undefined) {
+              structuredData = response.data;
+            }
+
+            if (response.message.hasToolCalls && tools && tools.length > 0) {
+              if (response.data !== undefined) {
+                break;
+              }
+
+              if (cycles >= maxIterations) {
+                await toolStrategy?.onMaxIterations?.(maxIterations);
+                throw new UPPError(
+                  `Tool execution exceeded maximum iterations (${maxIterations})`,
+                  ErrorCode.InvalidRequest,
+                  model.provider.name,
+                  ModalityType.LLM
+                );
+              }
+
+              const toolEvents: StreamEvent[] = [];
+              const results = await executeTools(
+                response.message,
+                tools,
+                toolStrategy,
+                toolExecutions,
+                (event) => toolEvents.push(event),
+                middleware,
+                ctx
+              );
+
+              for (const event of toolEvents) {
+                ensureNotAborted();
+                // Tool events also go through transformer
+                const transformed = transformer(event);
+                if (transformed === null) continue;
+                if (Array.isArray(transformed)) {
+                  for (const e of transformed) {
+                    yield e;
+                  }
+                } else {
+                  yield transformed;
+                }
+                // Yield any events emitted by middleware during tool hooks
+                yield* drainInlineEvents();
+              }
+
+              allMessages.push(new ToolResultMessage(results));
+
+              continue;
+            }
+
             break;
           }
 
-          if (cycles >= maxIterations) {
-            await toolStrategy?.onMaxIterations?.(maxIterations);
-            throw new UPPError(
-              `Tool execution exceeded maximum iterations (${maxIterations})`,
-              ErrorCode.InvalidRequest,
-              model.provider.name,
-              ModalityType.LLM
-            );
+          // Successful completion - exit retry loop
+          break retryLoop;
+        } catch (streamError) {
+          // Check if error is retryable
+          const err = toError(streamError);
+          const uppErr = err instanceof UPPError ? err : null;
+
+          // Only UPPErrors can be retried, and only if not cancelled
+          if (!uppErr || isCancelledError(err)) {
+            throw err;
           }
 
-          const toolEvents: StreamEvent[] = [];
-          const results = await executeTools(
-            response.message,
-            tools,
-            toolStrategy,
-            toolExecutions,
-            (event) => toolEvents.push(event),
-            middleware,
-            ctx
-          );
+          // Check retry strategy
+          const delay = await strategy.onRetry(uppErr, attempt);
+          if (delay === null) {
+            throw err;
+          }
 
-          for (const event of toolEvents) {
-            ensureNotAborted();
-            // Tool events also go through transformer
-            const transformed = transformer(event);
-            if (transformed === null) continue;
+          // Suppress unhandled rejection from abandoned stream response promise
+          lastStreamResult?.response.catch(() => {});
+
+          // Emit stream_retry event
+          const retryEvent = streamRetry(attempt, strategyMaxAttempts, err, Date.now());
+          const transformed = transformer(retryEvent);
+          if (transformed !== null) {
             if (Array.isArray(transformed)) {
               for (const e of transformed) {
                 yield e;
@@ -938,16 +1031,52 @@ function executeStream<TParams>(
             } else {
               yield transformed;
             }
-            // Yield any events emitted by middleware during tool hooks
-            yield* drainInlineEvents();
           }
 
-          allMessages.push(new ToolResultMessage(results));
+          // Run middleware onRetry hooks
+          await runRetryHook(middleware, attempt, err, ctx);
+          yield* drainInlineEvents();
 
-          continue;
+          // Reset state for retry (snapshot taken at start of current cycle preserves tool-loop progress)
+          allMessages = [...retryMessages];
+          turnStartIndex = retryTurnStartIndex;
+          // Decrement cycles so the failed cycle is retried (cycles++ happens at loop start)
+          cycles--;
+          // Note: usages and toolExecutions are only updated after successful response,
+          // so the failed cycle hasn't added to them yet - no need to truncate
+          structuredData = undefined;
+
+          // Update context request for retry
+          ctx.request = {
+            messages: allMessages,
+            system,
+            params,
+            tools,
+            structure,
+            config,
+          } as LLMRequest<TParams>;
+
+          // Increment attempt and wait for delay (abort-aware)
+          attempt += 1;
+          if (delay > 0) {
+            await new Promise<void>((resolve, reject) => {
+              const timeoutId = setTimeout(resolve, delay);
+              const handleDelayAbort = () => {
+                clearTimeout(timeoutId);
+                reject(new UPPError('Stream cancelled', ErrorCode.Cancelled, model.provider.name, ModalityType.LLM));
+              };
+              if (abortController.signal.aborted) {
+                clearTimeout(timeoutId);
+                reject(new UPPError('Stream cancelled', ErrorCode.Cancelled, model.provider.name, ModalityType.LLM));
+              } else {
+                abortController.signal.addEventListener('abort', handleDelayAbort, { once: true });
+              }
+            });
+          }
+
+          // Continue retry loop
+          continue retryLoop;
         }
-
-        break;
       }
 
       // Enable late event streaming for all post-stream hooks so middleware can emit

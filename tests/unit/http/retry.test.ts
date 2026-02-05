@@ -80,6 +80,20 @@ describe('exponentialBackoff', () => {
 
     expect(strategy1).not.toBe(strategy2);
   });
+
+  test('exposes maxAttempts property', () => {
+    const factory = exponentialBackoff({ maxAttempts: 5 });
+    const strategy = factory();
+
+    expect(strategy.maxAttempts).toBe(5);
+  });
+
+  test('maxAttempts defaults to 3', () => {
+    const factory = exponentialBackoff();
+    const strategy = factory();
+
+    expect(strategy.maxAttempts).toBe(3);
+  });
 });
 
 describe('linearBackoff', () => {
@@ -109,6 +123,20 @@ describe('linearBackoff', () => {
 
     expect(strategy1).not.toBe(strategy2);
   });
+
+  test('exposes maxAttempts property', () => {
+    const factory = linearBackoff({ maxAttempts: 4 });
+    const strategy = factory();
+
+    expect(strategy.maxAttempts).toBe(4);
+  });
+
+  test('maxAttempts defaults to 3', () => {
+    const factory = linearBackoff();
+    const strategy = factory();
+
+    expect(strategy.maxAttempts).toBe(3);
+  });
 });
 
 describe('noRetry', () => {
@@ -126,6 +154,13 @@ describe('noRetry', () => {
     const strategy2 = factory();
 
     expect(strategy1).not.toBe(strategy2);
+  });
+
+  test('exposes maxAttempts as 0', () => {
+    const factory = noRetry();
+    const strategy = factory();
+
+    expect(strategy.maxAttempts).toBe(0);
   });
 });
 
@@ -176,6 +211,20 @@ describe('retryAfterStrategy', () => {
     const error = new UPPError('rate limit', ErrorCode.RateLimited, 'mock', ModalityType.LLM);
     expect(strategy1.onRetry(error, 1)).toBe(2000);
     expect(strategy2.onRetry(error, 1)).toBe(1000);
+  });
+
+  test('exposes maxAttempts property', () => {
+    const factory = retryAfterStrategy({ maxAttempts: 5 });
+    const strategy = factory();
+
+    expect(strategy.maxAttempts).toBe(5);
+  });
+
+  test('maxAttempts defaults to 3', () => {
+    const factory = retryAfterStrategy();
+    const strategy = factory();
+
+    expect(strategy.maxAttempts).toBe(3);
   });
 });
 

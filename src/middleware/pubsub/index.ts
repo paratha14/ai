@@ -232,5 +232,26 @@ export function pubsubMiddleware(options: PubSubOptions = {}): Middleware {
     async onAbort(_error: Error, ctx: MiddlewareContext): Promise<void> {
       await finalizeStreamByState(ctx.state);
     },
+
+    async onRetry(_attempt: number, _error: Error, ctx: MiddlewareContext): Promise<void> {
+      const id = ctx.state.get(STATE_KEY_STREAM_ID) as string | undefined;
+      if (!id) {
+        return;
+      }
+
+      // Wait for in-flight appends to complete before clearing to prevent
+      // stale events from repopulating the buffer after clear (especially
+      // with async adapters like Redis)
+      await waitForAppends(id);
+
+      // Clear pending append chains
+      clearAppendState(id);
+
+      // Clear buffered events from adapter so subscribers don't receive duplicates
+      await adapter.clear(id);
+
+      // Reset stream ended flag for new attempt
+      ctx.state.delete(STATE_KEY_STREAM_ENDED);
+    },
   };
 }

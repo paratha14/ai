@@ -138,6 +138,10 @@ export function loggingMiddleware(options: LoggingOptions = {}): Middleware {
       log('warn', `[${ctx.provider}] Aborted after ${duration}ms: ${error.message}`);
     },
 
+    onRetry(attempt: number, error: Error, ctx: MiddlewareContext): void {
+      log('warn', `[${ctx.provider}] Retry attempt ${attempt}: ${error.message}`);
+    },
+
     onStreamEvent(event: StreamEvent, ctx: StreamContext): StreamEvent {
       if (logStreamEvents) {
         log('debug', `Stream event: ${event.type}`, { index: event.index });

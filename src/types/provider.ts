@@ -69,6 +69,12 @@ export interface KeyStrategy {
  */
 export interface RetryStrategy {
   /**
+   * Maximum number of retry attempts configured for this strategy.
+   * Used by streaming retry logic to emit progress events.
+   */
+  readonly maxAttempts?: number;
+
+  /**
    * Called when a request fails with a retryable error.
    *
    * @param error - The error that occurred

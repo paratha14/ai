@@ -2,6 +2,7 @@ import { test, expect, describe, mock } from 'bun:test';
 import {
   runHook,
   runErrorHook,
+  runRetryHook,
   runToolHook,
   runTurnHook,
   runStreamEndHook,
@@ -112,6 +113,83 @@ describe('runErrorHook', () => {
     await runErrorHook(middlewares, new Error('test'), ctx);
 
     expect(errors).toEqual(['second']);
+  });
+});
+
+describe('runRetryHook', () => {
+  test('runs onRetry for all middleware with the hook in forward order', async () => {
+    const calls: string[] = [];
+    const middlewares: Middleware[] = [
+      { name: 'first', onRetry: (attempt, err) => { calls.push(`first:${attempt}:${err.message}`); } },
+      { name: 'second' }, // No onRetry
+      { name: 'third', onRetry: (attempt, err) => { calls.push(`third:${attempt}:${err.message}`); } },
+    ];
+
+    const ctx = createMiddlewareContext('llm', 'test-model', 'test', false, {} as MiddlewareContext['request']);
+    await runRetryHook(middlewares, 2, new Error('rate limited'), ctx);
+
+    expect(calls).toEqual(['first:2:rate limited', 'third:2:rate limited']);
+  });
+
+  test('continues even if retry hook throws', async () => {
+    const calls: string[] = [];
+    const middlewares: Middleware[] = [
+      {
+        name: 'throwing',
+        onRetry: () => { throw new Error('hook error'); },
+      },
+      { name: 'second', onRetry: () => { calls.push('second'); } },
+    ];
+
+    const ctx = createMiddlewareContext('llm', 'test-model', 'test', false, {} as MiddlewareContext['request']);
+    await runRetryHook(middlewares, 1, new Error('test'), ctx);
+
+    expect(calls).toEqual(['second']);
+  });
+
+  test('handles async retry hooks', async () => {
+    const order: string[] = [];
+    const middlewares: Middleware[] = [
+      {
+        name: 'async-first',
+        async onRetry() {
+          await new Promise((r) => setTimeout(r, 10));
+          order.push('first');
+        },
+      },
+      {
+        name: 'async-second',
+        async onRetry() {
+          order.push('second');
+        },
+      },
+    ];
+
+    const ctx = createMiddlewareContext('llm', 'test-model', 'test', false, {} as MiddlewareContext['request']);
+    await runRetryHook(middlewares, 1, new Error('test'), ctx);
+
+    expect(order).toEqual(['first', 'second']);
+  });
+
+  test('receives middleware context for state access', async () => {
+    let receivedCtx: MiddlewareContext | undefined;
+    const middlewares: Middleware[] = [
+      {
+        name: 'state-reader',
+        onRetry(_attempt, _error, ctx) {
+          receivedCtx = ctx;
+          ctx.state.delete('accumulated');
+        },
+      },
+    ];
+
+    const ctx = createMiddlewareContext('llm', 'test-model', 'test', true, {} as MiddlewareContext['request']);
+    ctx.state.set('accumulated', 'some data');
+    await runRetryHook(middlewares, 1, new Error('test'), ctx);
+
+    expect(receivedCtx).toBeDefined();
+    expect(receivedCtx).toBe(ctx);
+    expect(ctx.state.has('accumulated')).toBe(false);
   });
 });
 

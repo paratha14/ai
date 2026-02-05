@@ -7,7 +7,7 @@
  * @module middleware/parsed-object
  */
 
-import type { Middleware, StreamContext } from '../types/middleware.ts';
+import type { Middleware, MiddlewareContext, StreamContext } from '../types/middleware.ts';
 import type { EventDelta, StreamEvent } from '../types/stream.ts';
 import { StreamEventType } from '../types/stream.ts';
 import { parsePartialJson } from '../utils/partial-json.ts';
@@ -153,7 +153,11 @@ export function parsedObjectMiddleware(options: ParsedObjectOptions = {}): Middl
     },
 
     onStreamEnd(ctx: StreamContext): void {
-      // Clean up accumulated state to prevent memory buildup in long sessions
+      ctx.state.delete(ACCUMULATED_TEXT_KEY);
+      ctx.state.delete(ACCUMULATED_ARGS_KEY);
+    },
+
+    onRetry(_attempt: number, _error: Error, ctx: MiddlewareContext): void {
       ctx.state.delete(ACCUMULATED_TEXT_KEY);
       ctx.state.delete(ACCUMULATED_ARGS_KEY);
     },

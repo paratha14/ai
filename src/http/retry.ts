@@ -78,6 +78,8 @@ export function exponentialBackoff(options: ExponentialBackoffOptions = {}): Ret
   const jitter = options.jitter ?? true;
 
   return (): RetryStrategy => ({
+    maxAttempts,
+
     onRetry(error: UPPError, attempt: number): number | null {
       if (attempt > maxAttempts) {
         return null;
@@ -148,6 +150,8 @@ export function linearBackoff(options: LinearBackoffOptions = {}): RetryStrategy
   const delay = options.delay ?? 1000;
 
   return (): RetryStrategy => ({
+    maxAttempts,
+
     onRetry(error: UPPError, attempt: number): number | null {
       if (attempt > maxAttempts) {
         return null;
@@ -183,6 +187,8 @@ export function linearBackoff(options: LinearBackoffOptions = {}): RetryStrategy
  */
 export function noRetry(): RetryStrategyFactory {
   return (): RetryStrategy => ({
+    maxAttempts: 0,
+
     onRetry(): null {
       return null;
     },
@@ -238,6 +244,8 @@ export function retryAfterStrategy(options: RetryAfterStrategyOptions = {}): Ret
     let lastRetryAfter: number | undefined;
 
     return {
+      maxAttempts,
+
       setRetryAfter(seconds: number): void {
         lastRetryAfter = seconds * 1000;
       },

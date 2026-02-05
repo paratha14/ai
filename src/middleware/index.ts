@@ -18,6 +18,7 @@ export {
   runHook,
   runErrorHook,
   runAbortHook,
+  runRetryHook,
   runToolHook,
   runTurnHook,
   runStreamEndHook,

@@ -185,6 +185,17 @@ export interface Middleware {
    */
   onAbort?(error: Error, ctx: MiddlewareContext): void | Promise<void>;
 
+  /**
+   * Called before a retry attempt is made after a retryable error.
+   * Allows middleware to reset state or perform cleanup before the retry.
+   * Called for all middleware that have this hook, in forward order.
+   *
+   * @param attempt - The retry attempt number (1-indexed)
+   * @param error - The error that triggered the retry
+   * @param ctx - The middleware context
+   */
+  onRetry?(attempt: number, error: Error, ctx: MiddlewareContext): void | Promise<void>;
+
   // === Request/Response Hooks ===
 
   /**
