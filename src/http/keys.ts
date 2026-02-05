@@ -7,20 +7,23 @@ import type { ProviderConfig, KeyStrategy } from '../types/provider.ts';
 import { ErrorCode, UPPError, type Modality } from '../types/errors.ts';
 
 /**
- * Distributes API requests across multiple keys using round-robin selection.
+ * Creates a key strategy that distributes API requests across multiple keys
+ * using round-robin selection.
  *
- * Each call to {@link getKey} returns the next key in sequence, cycling back to
+ * Each call to `getKey()` returns the next key in sequence, cycling back to
  * the first key after reaching the end. This provides even distribution of requests
  * across all available keys, which is useful for:
  * - Spreading rate limits across multiple API keys
  * - Load balancing between different accounts
  * - Maximizing throughput when multiple keys are available
  *
- * @implements {KeyStrategy}
+ * @param keys - Array of API keys to rotate through
+ * @returns A {@link KeyStrategy} that cycles through the provided keys
+ * @throws {Error} When the keys array is empty
  *
  * @example
  * ```typescript
- * const keys = new RoundRobinKeys([
+ * const keys = roundRobinKeys([
  *   'sk-key-1',
  *   'sk-key-2',
  *   'sk-key-3'
@@ -32,37 +35,23 @@ import { ErrorCode, UPPError, type Modality } from '../types/errors.ts';
  * keys.getKey(); // Returns 'sk-key-1' (cycles back)
  * ```
  */
-export class RoundRobinKeys implements KeyStrategy {
-  private keys: string[];
-  private index = 0;
-
-  /**
-   * Creates a new RoundRobinKeys instance.
-   *
-   * @param keys - Array of API keys to rotate through
-   * @throws {Error} When the keys array is empty
-   */
-  constructor(keys: string[]) {
-    if (keys.length === 0) {
-      throw new Error('RoundRobinKeys requires at least one key');
-    }
-    this.keys = keys;
+export function roundRobinKeys(keys: string[]): KeyStrategy {
+  if (keys.length === 0) {
+    throw new Error('roundRobinKeys requires at least one key');
   }
-
-  /**
-   * Returns the next key in the rotation sequence.
-   *
-   * @returns The next API key in round-robin order
-   */
-  getKey(): string {
-    const key = this.keys[this.index]!;
-    this.index = (this.index + 1) % this.keys.length;
-    return key;
-  }
+  const snapshot = [...keys];
+  let index = 0;
+  return {
+    getKey(): string {
+      const key = snapshot[index]!;
+      index = (index + 1) % snapshot.length;
+      return key;
+    },
+  };
 }
 
 /**
- * Selects API keys using weighted random probability.
+ * Creates a key strategy that selects API keys using weighted random probability.
  *
  * Each key is assigned a weight that determines its probability of being selected.
  * Higher weights mean higher selection probability. This is useful for:
@@ -73,11 +62,13 @@ export class RoundRobinKeys implements KeyStrategy {
  *
  * The selection probability for each key is: weight / totalWeight
  *
- * @implements {KeyStrategy}
+ * @param keys - Array of key-weight pairs defining selection probabilities
+ * @returns A {@link KeyStrategy} that selects keys by weighted probability
+ * @throws {Error} When the keys array is empty
  *
  * @example
  * ```typescript
- * const keys = new WeightedKeys([
+ * const keys = weightedKeys([
  *   { key: 'sk-premium', weight: 70 },   // 70% of requests
  *   { key: 'sk-standard', weight: 20 },  // 20% of requests
  *   { key: 'sk-backup', weight: 10 }     // 10% of requests
@@ -89,49 +80,35 @@ export class RoundRobinKeys implements KeyStrategy {
  * });
  * ```
  */
-export class WeightedKeys implements KeyStrategy {
-  private entries: Array<{ key: string; weight: number }>;
-  private totalWeight: number;
-
-  /**
-   * Creates a new WeightedKeys instance.
-   *
-   * @param keys - Array of key-weight pairs defining selection probabilities
-   * @throws {Error} When the keys array is empty
-   */
-  constructor(keys: Array<{ key: string; weight: number }>) {
-    if (keys.length === 0) {
-      throw new Error('WeightedKeys requires at least one key');
-    }
-    this.entries = keys;
-    this.totalWeight = keys.reduce((sum, k) => sum + k.weight, 0);
+export function weightedKeys(keys: Array<{ key: string; weight: number }>): KeyStrategy {
+  if (keys.length === 0) {
+    throw new Error('weightedKeys requires at least one key');
   }
+  const snapshot = keys.map((k) => ({ ...k }));
+  const totalWeight = snapshot.reduce((sum, k) => sum + k.weight, 0);
+  if (totalWeight <= 0) {
+    throw new Error('weightedKeys requires at least one key with a positive weight');
+  }
+  return {
+    getKey(): string {
+      const random = Math.random() * totalWeight;
+      let cumulative = 0;
 
-  /**
-   * Returns a randomly selected key based on configured weights.
-   *
-   * @returns An API key selected with probability proportional to its weight
-   */
-  getKey(): string {
-    const random = Math.random() * this.totalWeight;
-    let cumulative = 0;
-
-    for (const entry of this.entries) {
-      cumulative += entry.weight;
-      if (random <= cumulative) {
-        return entry.key;
+      for (const entry of snapshot) {
+        cumulative += entry.weight;
+        if (random <= cumulative) {
+          return entry.key;
+        }
       }
-    }
 
-    return this.entries[this.entries.length - 1]!.key;
-  }
+      return snapshot[snapshot.length - 1]!.key;
+    },
+  };
 }
 
 /**
- * Provides dynamic key selection using custom logic.
- *
- * This strategy delegates key selection to a user-provided function, enabling
- * advanced scenarios such as:
+ * Creates a key strategy that delegates key selection to a user-provided function,
+ * enabling advanced scenarios such as:
  * - Fetching keys from a secrets manager (AWS Secrets Manager, HashiCorp Vault)
  * - Rotating keys based on external state or configuration
  * - Selecting keys based on request context or time of day
@@ -139,50 +116,37 @@ export class WeightedKeys implements KeyStrategy {
  *
  * The selector function can be synchronous or asynchronous.
  *
- * @implements {KeyStrategy}
+ * @param selector - Function that returns an API key (sync or async)
+ * @returns A {@link KeyStrategy} that delegates to the selector function
  *
  * @example
  * ```typescript
  * // Fetch key from environment based on current mode
- * const dynamicKey = new DynamicKey(() => {
+ * const envKey = dynamicKey(() => {
  *   return process.env.NODE_ENV === 'production'
  *     ? process.env.PROD_API_KEY!
  *     : process.env.DEV_API_KEY!;
  * });
  *
  * // Async key fetching from a secrets manager
- * const vaultKey = new DynamicKey(async () => {
+ * const vaultKey = dynamicKey(async () => {
  *   const secret = await vault.read('secret/openai');
  *   return secret.data.apiKey;
  * });
  *
  * // Time-based key rotation
- * const timedKey = new DynamicKey(() => {
+ * const timedKey = dynamicKey(() => {
  *   const hour = new Date().getHours();
  *   return hour < 12 ? morningKey : afternoonKey;
  * });
  * ```
  */
-export class DynamicKey implements KeyStrategy {
-  private selector: () => string | Promise<string>;
-
-  /**
-   * Creates a new DynamicKey instance.
-   *
-   * @param selector - Function that returns an API key (sync or async)
-   */
-  constructor(selector: () => string | Promise<string>) {
-    this.selector = selector;
-  }
-
-  /**
-   * Invokes the selector function to retrieve the current key.
-   *
-   * @returns Promise resolving to the selected API key
-   */
-  async getKey(): Promise<string> {
-    return this.selector();
-  }
+export function dynamicKey(selector: () => string | Promise<string>): KeyStrategy {
+  return {
+    async getKey(): Promise<string> {
+      return selector();
+    },
+  };
 }
 
 /**
@@ -226,7 +190,7 @@ function isKeyStrategy(value: unknown): value is KeyStrategy {
  * This function handles various key specification methods in priority order:
  * 1. Direct string key in config.apiKey
  * 2. Function returning a key (sync or async) in config.apiKey
- * 3. KeyStrategy instance in config.apiKey (RoundRobinKeys, WeightedKeys, DynamicKey)
+ * 3. KeyStrategy instance in config.apiKey (roundRobinKeys, weightedKeys, dynamicKey)
  * 4. Environment variable fallback (if envVar parameter is provided)
  *
  * @param config - Provider configuration containing the apiKey option
@@ -247,7 +211,7 @@ function isKeyStrategy(value: unknown): value is KeyStrategy {
  *
  * // KeyStrategy instance
  * const key3 = await resolveApiKey({
- *   apiKey: new RoundRobinKeys(['sk-1', 'sk-2', 'sk-3'])
+ *   apiKey: roundRobinKeys(['sk-1', 'sk-2', 'sk-3'])
  * }, 'OPENAI_API_KEY', 'openai');
  *
  * // Environment variable fallback

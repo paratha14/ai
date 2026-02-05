@@ -13,9 +13,9 @@
 
 export {
   resolveApiKey,
-  RoundRobinKeys,
-  WeightedKeys,
-  DynamicKey,
+  roundRobinKeys,
+  weightedKeys,
+  dynamicKey,
   maskApiKey,
 } from './keys.ts';
 

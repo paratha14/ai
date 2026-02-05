@@ -506,13 +506,13 @@ const result = await editor.edit({
 ## Configuration
 
 ```typescript
-import { llm, exponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai';
+import { llm, exponentialBackoff, roundRobinKeys } from '@providerprotocol/ai';
 import { openai } from '@providerprotocol/ai/openai';
 
 const instance = llm({
   model: openai('gpt-4o'),
   config: {
-    apiKey: new RoundRobinKeys(['sk-key1', 'sk-key2']),
+    apiKey: roundRobinKeys(['sk-key1', 'sk-key2']),
     timeout: 30000,
     retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
   },
@@ -572,19 +572,19 @@ interface ProviderConfig {
 ### Key Strategies
 
 ```typescript
-import { RoundRobinKeys, WeightedKeys, DynamicKey } from '@providerprotocol/ai/http';
+import { roundRobinKeys, weightedKeys, dynamicKey } from '@providerprotocol/ai/http';
 
 // Cycle through keys evenly
-new RoundRobinKeys(['sk-1', 'sk-2', 'sk-3'])
+roundRobinKeys(['sk-1', 'sk-2', 'sk-3'])
 
 // Weighted selection (70% key1, 30% key2)
-new WeightedKeys([
+weightedKeys([
   { key: 'sk-1', weight: 70 },
   { key: 'sk-2', weight: 30 },
 ])
 
 // Dynamic fetching (secrets manager, etc.)
-new DynamicKey(async () => fetchKeyFromVault())
+dynamicKey(async () => fetchKeyFromVault())
 ```
 
 ### Retry Strategies
@@ -1005,7 +1005,7 @@ Build AI API gateways with your own authentication. Users authenticate with your
 ### Server (Bun/Deno/Cloudflare Workers)
 
 ```typescript
-import { llm, exponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai';
+import { llm, exponentialBackoff, roundRobinKeys } from '@providerprotocol/ai';
 import { anthropic } from '@providerprotocol/ai/anthropic';
 import { parseBody, toJSON, toSSE, toError } from '@providerprotocol/ai/proxy';
 
@@ -1013,7 +1013,7 @@ import { parseBody, toJSON, toSSE, toError } from '@providerprotocol/ai/proxy';
 const claude = llm({
   model: anthropic('claude-sonnet-4-20250514'),
   config: {
-    apiKey: new RoundRobinKeys([process.env.ANTHROPIC_KEY_1!, process.env.ANTHROPIC_KEY_2!]),
+    apiKey: roundRobinKeys([process.env.ANTHROPIC_KEY_1!, process.env.ANTHROPIC_KEY_2!]),
     retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
   },
 });

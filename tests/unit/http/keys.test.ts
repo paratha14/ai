@@ -1,16 +1,16 @@
 import { test, expect, describe, beforeEach, afterEach } from 'bun:test';
 import {
   resolveApiKey,
-  RoundRobinKeys,
-  WeightedKeys,
-  DynamicKey,
+  roundRobinKeys,
+  weightedKeys,
+  dynamicKey,
   maskApiKey,
 } from '../../../src/http/keys.ts';
 import { UPPError, ErrorCode } from '../../../src/types/errors.ts';
 
-describe('RoundRobinKeys', () => {
+describe('roundRobinKeys', () => {
   test('cycles through keys', () => {
-    const strategy = new RoundRobinKeys(['key1', 'key2', 'key3']);
+    const strategy = roundRobinKeys(['key1', 'key2', 'key3']);
     expect(strategy.getKey()).toBe('key1');
     expect(strategy.getKey()).toBe('key2');
     expect(strategy.getKey()).toBe('key3');
@@ -18,19 +18,19 @@ describe('RoundRobinKeys', () => {
   });
 
   test('throws on empty array', () => {
-    expect(() => new RoundRobinKeys([])).toThrow();
+    expect(() => roundRobinKeys([])).toThrow();
   });
 
   test('works with single key', () => {
-    const strategy = new RoundRobinKeys(['only']);
+    const strategy = roundRobinKeys(['only']);
     expect(strategy.getKey()).toBe('only');
     expect(strategy.getKey()).toBe('only');
   });
 });
 
-describe('WeightedKeys', () => {
+describe('weightedKeys', () => {
   test('returns keys based on weight', () => {
-    const strategy = new WeightedKeys([
+    const strategy = weightedKeys([
       { key: 'heavy', weight: 100 },
       { key: 'light', weight: 0 },
     ]);
@@ -41,14 +41,21 @@ describe('WeightedKeys', () => {
   });
 
   test('throws on empty array', () => {
-    expect(() => new WeightedKeys([])).toThrow();
+    expect(() => weightedKeys([])).toThrow();
+  });
+
+  test('throws when all weights are zero', () => {
+    expect(() => weightedKeys([
+      { key: 'a', weight: 0 },
+      { key: 'b', weight: 0 },
+    ])).toThrow('at least one key with a positive weight');
   });
 });
 
-describe('DynamicKey', () => {
+describe('dynamicKey', () => {
   test('calls selector function', async () => {
     let calls = 0;
-    const strategy = new DynamicKey(() => {
+    const strategy = dynamicKey(() => {
       calls++;
       return `key-${calls}`;
     });
@@ -58,7 +65,7 @@ describe('DynamicKey', () => {
   });
 
   test('supports async selector', async () => {
-    const strategy = new DynamicKey(async () => {
+    const strategy = dynamicKey(async () => {
       return 'async-key';
     });
     expect(await strategy.getKey()).toBe('async-key');
@@ -93,7 +100,7 @@ describe('resolveApiKey', () => {
 
   test('resolves KeyStrategy', async () => {
     const key = await resolveApiKey({
-      apiKey: new RoundRobinKeys(['strategy-key']),
+      apiKey: roundRobinKeys(['strategy-key']),
     });
     expect(key).toBe('strategy-key');
   });

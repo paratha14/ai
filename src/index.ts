@@ -86,9 +86,9 @@ export const ai = {
 export * from './types/index.ts';
 
 export {
-  RoundRobinKeys,
-  WeightedKeys,
-  DynamicKey,
+  roundRobinKeys,
+  weightedKeys,
+  dynamicKey,
   exponentialBackoff,
   linearBackoff,
   noRetry,

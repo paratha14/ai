@@ -922,13 +922,13 @@ const instance = llm({
 });
 
 // Key rotation strategies
-import { RoundRobinKeys, WeightedKeys, DynamicKey } from '@providerprotocol/ai/http';
+import { roundRobinKeys, weightedKeys, dynamicKey } from '@providerprotocol/ai/http';
 
 // Round-robin through multiple keys
 const instance = llm({
   model: openai('gpt-4o'),
   config: {
-    apiKey: new RoundRobinKeys(['key1', 'key2', 'key3']),
+    apiKey: roundRobinKeys(['key1', 'key2', 'key3']),
   },
 });
 
@@ -936,7 +936,7 @@ const instance = llm({
 const instance2 = llm({
   model: openai('gpt-4o'),
   config: {
-    apiKey: new WeightedKeys([
+    apiKey: weightedKeys([
       { key: 'primary-key', weight: 3 },
       { key: 'backup-key', weight: 1 },
     ]),
@@ -947,7 +947,7 @@ const instance2 = llm({
 const instance3 = llm({
   model: openai('gpt-4o'),
   config: {
-    apiKey: new DynamicKey(async () => await fetchKeyFromVault()),
+    apiKey: dynamicKey(async () => await fetchKeyFromVault()),
   },
 });
 ```

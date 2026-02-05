@@ -124,7 +124,7 @@ Each modality gets a purpose-built interface:
 While interfaces differ, providers share common infrastructure:
 
 - `ProviderConfig` (apiKey, baseUrl, timeout, retry)
-- `KeyStrategy` (RoundRobin, Weighted, Dynamic)
+- `KeyStrategy` (roundRobinKeys, weightedKeys, dynamicKey)
 - Error handling (`UPPError`, `ErrorCode`)
 
 ### 2.5 HTTP-First Provider Implementation
@@ -227,9 +227,9 @@ interface KeyStrategy {
 
 | Strategy | Description |
 |----------|-------------|
-| `RoundRobinKeys(keys[])` | Cycles through keys in order |
-| `WeightedKeys(entries[])` | Random selection with weights |
-| `DynamicKey(fn)` | Custom async key selection |
+| `roundRobinKeys(keys[])` | Cycles through keys in order |
+| `weightedKeys(entries[])` | Random selection with weights |
+| `dynamicKey(fn)` | Custom async key selection |
 
 ### 4.3 Retry Strategies
 

@@ -248,7 +248,7 @@ export function sendError(message: string, status: number, event: H3Event): { er
  * ```typescript
  * // server/api/ai.post.ts
  * import { sendStream } from 'h3';
- * import { llm, exponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai';
+ * import { llm, exponentialBackoff, roundRobinKeys } from '@providerprotocol/ai';
  * import { anthropic } from '@providerprotocol/ai/anthropic';
  * import { parseBody, h3 as h3Adapter } from '@providerprotocol/ai/proxy';
  *
@@ -256,7 +256,7 @@ export function sendError(message: string, status: number, event: H3Event): { er
  * const claude = llm({
  *   model: anthropic('claude-sonnet-4-20250514'),
  *   config: {
- *     apiKey: new RoundRobinKeys([
+ *     apiKey: roundRobinKeys([
  *       process.env.ANTHROPIC_KEY_1!,
  *       process.env.ANTHROPIC_KEY_2!,
  *     ]),

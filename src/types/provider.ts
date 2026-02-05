@@ -19,20 +19,15 @@ import type { BoundLLMModel } from './llm.ts';
  *
  * @example
  * ```typescript
- * class RoundRobinKeys implements KeyStrategy {
- *   private keys: string[];
- *   private index = 0;
+ * // Built-in key strategies
+ * const keys = roundRobinKeys(['sk-key-1', 'sk-key-2']);
  *
- *   constructor(keys: string[]) {
- *     this.keys = keys;
- *   }
- *
+ * // Custom implementation
+ * const custom: KeyStrategy = {
  *   getKey(): string {
- *     const key = this.keys[this.index];
- *     this.index = (this.index + 1) % this.keys.length;
- *     return key;
+ *     return pickKeyFromPool();
  *   }
- * }
+ * };
  * ```
  */
 export interface KeyStrategy {
@@ -153,7 +148,7 @@ export interface ProviderIdentity {
  *
  * // Or with a key strategy for key rotation
  * const config: ProviderConfig = {
- *   apiKey: new RoundRobinKeys(['sk-1', 'sk-2', 'sk-3']),
+ *   apiKey: roundRobinKeys(['sk-1', 'sk-2', 'sk-3']),
  *   baseUrl: 'https://custom-proxy.example.com'
  * };
  * ```
