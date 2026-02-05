@@ -249,9 +249,10 @@ The `onRetry` method MUST return delay in milliseconds before retry, or `null` t
 
 | Strategy | Description |
 |----------|-------------|
-| `ExponentialBackoff(options)` | Exponential backoff with jitter |
-| `LinearBackoff(options)` | Fixed delay between retries |
-| `NoRetry()` | No automatic retry |
+| `exponentialBackoff(options)` | Exponential backoff with jitter |
+| `linearBackoff(options)` | Fixed delay between retries |
+| `retryAfterStrategy(options)` | Respects server Retry-After headers |
+| `noRetry()` | No automatic retry |
 
 ### 4.4 Error Handling
 

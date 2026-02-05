@@ -139,7 +139,7 @@ The package uses subpath exports to keep bundles small. Import only what you nee
 | `@providerprotocol/ai/proxy/server/express` | Proxy Express adapter |
 | `@providerprotocol/ai/proxy/server/h3` | Proxy H3/Nuxt adapter |
 | `@providerprotocol/ai/proxy/server/fastify` | Proxy Fastify adapter |
-| `@providerprotocol/ai/utils` | Utilities: Zod conversion, partial JSON parsing |
+| `@providerprotocol/ai/utils` | Utilities: Zod conversion, partial JSON, error handling, ID generation |
 
 ### Example: Minimal Import
 
@@ -226,6 +226,18 @@ interface Turn<TData = unknown> {
   cycles: number;                // Number of inference iterations
   data?: TData;                  // Structured output data (if schema provided)
 }
+```
+
+For serialization (persistence, transport), use `TurnJSON`:
+
+```typescript
+import type { TurnJSON } from '@providerprotocol/ai';
+
+// TurnJSON replaces messages with MessageJSON[] and omits response
+// (response is derivable from the last assistant message)
+type TurnJSON = Omit<Turn, 'messages' | 'response'> & {
+  messages: MessageJSON[];
+};
 ```
 
 ### Accessing Response Content
@@ -906,12 +918,12 @@ const instance3 = llm({
 ### Retry Strategies
 
 ```typescript
-import { ExponentialBackoff, LinearBackoff, RetryAfterStrategy } from '@providerprotocol/ai/http';
+import { llm, exponentialBackoff, linearBackoff } from '@providerprotocol/ai';
 
 const instance = llm({
   model: anthropic('claude-sonnet-4-20250514'),
   config: {
-    retryStrategy: new ExponentialBackoff({
+    retryStrategy: exponentialBackoff({
       maxAttempts: 3,
       baseDelay: 1000,
       maxDelay: 30000,
@@ -919,11 +931,11 @@ const instance = llm({
   },
 });
 
-// Or use LinearBackoff for fixed delays
+// Or use linearBackoff for fixed delays
 const instance2 = llm({
   model: openai('gpt-4o'),
   config: {
-    retryStrategy: new LinearBackoff({ maxAttempts: 3, delay: 1000 }),
+    retryStrategy: linearBackoff({ maxAttempts: 3, delay: 1000 }),
   },
 });
 ```
@@ -941,22 +953,29 @@ const instance = llm({
 
 ---
 
-## Zod Schema Utilities
+## Utilities
 
-The SDK provides utilities for working with Zod schemas directly. These are used internally but also exported for advanced use cases.
+The SDK provides utilities for working with Zod schemas, error handling, and ID generation. These are used internally but also exported for advanced use cases.
 
 ```typescript
 import {
+  // Zod schema utilities
   isZodSchema,
   isZodV4,
   zodToJSONSchema,
   zodToJSONSchemaSync,
   resolveStructure,
   resolveTools,
+  // Error handling
+  toError,
+  isCancelledError,
+  // ID generation
+  generateId,
+  generateShortId,
 } from '@providerprotocol/ai/utils';
 ```
 
-### Utility Functions
+### Zod Schema Functions
 
 | Function | Description |
 |----------|-------------|
@@ -966,6 +985,38 @@ import {
 | `zodToJSONSchemaSync(schema)` | Sync conversion (requires prior async load) |
 | `resolveStructure(structure)` | Pass-through for JSONSchema, converts Zod |
 | `resolveTools(tools)` | Resolve tool array, converting Zod parameters |
+
+### Error Handling Functions
+
+| Function | Description |
+|----------|-------------|
+| `toError(value)` | Converts any thrown value to an Error instance |
+| `isCancelledError(value)` | Type guard for AbortError/cancellation detection |
+
+```typescript
+try {
+  await instance.generate('Hello');
+} catch (error) {
+  const err = toError(error);
+  if (isCancelledError(error)) {
+    console.log('Request was cancelled');
+  } else {
+    console.error('Error:', err.message);
+  }
+}
+```
+
+### ID Generation Functions
+
+| Function | Description |
+|----------|-------------|
+| `generateId()` | UUID v4 generation (e.g., `f47ac10b-58cc-4372-a567-0e02b2c3d479`) |
+| `generateShortId(prefix?)` | Short alphanumeric ID (12 chars, e.g., `call_aB3xY9mK2pQr`) |
+
+```typescript
+const messageId = generateId();        // "f47ac10b-58cc-4372-..."
+const toolCallId = generateShortId('call_');  // "call_aB3xY9mK2pQr"
+```
 
 ### Zod Version Support
 
@@ -1407,7 +1458,9 @@ const instance = llm<AnthropicLLMParams>({
 import { openai } from '@providerprotocol/ai/openai';
 import type {
   OpenAICompletionsParams,
-  OpenAIResponsesParams
+  OpenAIResponsesParams,
+  OpenAIHeaders,
+  OpenAIImageParams,
 } from '@providerprotocol/ai/openai';
 
 // Responses API (default, stateful, supports web search tools)
@@ -1428,19 +1481,41 @@ const completionsInstance = llm<OpenAICompletionsParams>({
     frequency_penalty: 0.5,
   },
 });
+
+// Custom headers (OpenAI-Organization, OpenAI-Project, etc.)
+const withHeaders = llm({
+  model: openai('gpt-4o'),
+  config: {
+    headers: {
+      'OpenAI-Organization': 'org-xxx',
+      'OpenAI-Project': 'proj-xxx',
+    },
+  },
+});
 ```
 
 ### Google
 
 ```typescript
 import { google } from '@providerprotocol/ai/google';
-import type { GoogleLLMParams } from '@providerprotocol/ai/google';
+import type { GoogleLLMParams, GoogleImagenParams } from '@providerprotocol/ai/google';
 
 const instance = llm<GoogleLLMParams>({
   model: google('gemini-2.0-flash'),
   params: {
     temperature: 0.7,
     maxOutputTokens: 2048,
+  },
+});
+
+// Image generation with Imagen
+import { image } from '@providerprotocol/ai';
+
+const imageGen = image<GoogleImagenParams>({
+  model: google('imagen-3.0-generate-002'),
+  params: {
+    aspectRatio: '16:9',
+    personGeneration: 'ALLOW_ADULT',
   },
 });
 ```
@@ -1545,6 +1620,77 @@ const withTools = llm<MoonshotLLMParams>({
 | `tools.memory()` | Memory storage and retrieval |
 | `tools.rethink()` | Intelligent reasoning/reflection |
 | `tools.randomChoice()` | Random selection with weights |
+
+### Ollama
+
+```typescript
+import { ollama } from '@providerprotocol/ai/ollama';
+import type { OllamaLLMParams, OllamaEmbedParams, OllamaHeaders } from '@providerprotocol/ai/ollama';
+
+const instance = llm<OllamaLLMParams>({
+  model: ollama('llama3.2'),
+  params: {
+    num_predict: 4096,
+    temperature: 0.7,
+  },
+});
+
+// Custom headers (e.g., for authentication with Ollama proxy)
+const withHeaders = llm({
+  model: ollama('llama3.2'),
+  config: {
+    headers: {
+      'Authorization': 'Bearer token',
+    },
+  },
+});
+
+// Embeddings
+import { embedding } from '@providerprotocol/ai';
+
+const embedder = embedding<OllamaEmbedParams>({
+  model: ollama('nomic-embed-text'),
+});
+```
+
+### OpenRouter
+
+```typescript
+import { openrouter } from '@providerprotocol/ai/openrouter';
+import type {
+  OpenRouterCompletionsParams,
+  OpenRouterResponsesParams,
+  OpenRouterProviderOptions,
+  OpenRouterHeaders,
+} from '@providerprotocol/ai/openrouter';
+
+// Chat Completions API (default)
+const instance = llm<OpenRouterCompletionsParams>({
+  model: openrouter('anthropic/claude-sonnet-4-20250514'),
+  params: {
+    max_tokens: 4096,
+    temperature: 0.7,
+  },
+});
+
+// Responses API (beta)
+const responsesInstance = llm<OpenRouterResponsesParams>({
+  model: openrouter('openai/gpt-4o', { api: 'responses' }),
+  params: {
+    max_output_tokens: 1000,
+  },
+});
+
+// Provider preferences
+const withPreferences = llm({
+  model: openrouter('anthropic/claude-sonnet-4-20250514', {
+    providerPreferences: {
+      allow_fallbacks: true,
+      require_parameters: true,
+    },
+  }),
+});
+```
 
 ---
 

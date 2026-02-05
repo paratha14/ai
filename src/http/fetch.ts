@@ -3,7 +3,7 @@
  * @module http/fetch
  */
 
-import type { ProviderConfig, RetryStrategy } from '../types/provider.ts';
+import type { ProviderConfig } from '../types/provider.ts';
 import type { Modality } from '../types/errors.ts';
 import { UPPError } from '../types/errors.ts';
 import {
@@ -12,6 +12,7 @@ import {
   timeoutError,
   cancelledError,
 } from './errors.ts';
+import { noRetry } from './retry.ts';
 import { toError } from '../utils/error.ts';
 
 /** Default request timeout in milliseconds (2 minutes). */
@@ -35,14 +36,6 @@ export function warnInsecureUrl(url: string, provider: string): void {
       'API keys may be exposed to network interception.'
     );
   }
-}
-
-type ForkableRetryStrategy = RetryStrategy & {
-  fork: () => RetryStrategy | undefined;
-};
-
-function hasFork(strategy: RetryStrategy | undefined): strategy is ForkableRetryStrategy {
-  return !!strategy && typeof (strategy as { fork?: unknown }).fork === 'function';
 }
 
 /**
@@ -180,7 +173,7 @@ async function fetchWithTimeout(
  *     headers: { 'Authorization': 'Bearer sk-...' },
  *     body: JSON.stringify({ model: 'gpt-4', messages: [] })
  *   },
- *   { timeout: 30000, retryStrategy: new ExponentialBackoff() },
+ *   { timeout: 30000, retryStrategy: exponentialBackoff() },
  *   'openai',
  *   'llm'
  * );
@@ -195,8 +188,7 @@ export async function doFetch(
 ): Promise<Response> {
   const fetchFn = config.fetch ?? fetch;
   const timeout = config.timeout ?? DEFAULT_TIMEOUT;
-  const baseStrategy = config.retryStrategy;
-  const strategy = hasFork(baseStrategy) ? baseStrategy.fork() : baseStrategy;
+  const strategy = (config.retryStrategy ?? noRetry())();
 
   // Warn about potential security issue with non-TLS URLs
   warnInsecureUrl(url, provider);
@@ -206,7 +198,7 @@ export async function doFetch(
   while (true) {
     attempt++;
 
-    if (strategy?.beforeRequest) {
+    if (strategy.beforeRequest) {
       const delay = await strategy.beforeRequest();
       if (delay > 0) {
         await sleep(delay);
@@ -225,24 +217,20 @@ export async function doFetch(
       );
     } catch (error) {
       if (error instanceof UPPError) {
-        if (strategy) {
-          const delay = await strategy.onRetry(error, attempt);
-          if (delay !== null) {
-            await sleep(delay);
-            continue;
-          }
+        const delay = await strategy.onRetry(error, attempt);
+        if (delay !== null) {
+          await sleep(delay);
+          continue;
         }
         throw error;
       }
 
       const uppError = networkError(toError(error), provider, modality);
 
-      if (strategy) {
-        const delay = await strategy.onRetry(uppError, attempt);
-        if (delay !== null) {
-          await sleep(delay);
-          continue;
-        }
+      const delay = await strategy.onRetry(uppError, attempt);
+      if (delay !== null) {
+        await sleep(delay);
+        continue;
       }
 
       throw uppError;
@@ -255,24 +243,20 @@ export async function doFetch(
         response.headers.get('Retry-After'),
         config.retryAfterMaxSeconds ?? MAX_RETRY_AFTER_SECONDS
       );
-      if (retryAfterSeconds !== null && strategy && 'setRetryAfter' in strategy) {
-        (strategy as { setRetryAfter: (s: number) => void }).setRetryAfter(
-          retryAfterSeconds
-        );
+      if (retryAfterSeconds !== null && strategy.setRetryAfter) {
+        strategy.setRetryAfter(retryAfterSeconds);
       }
 
-      if (strategy) {
-        const delay = await strategy.onRetry(error, attempt);
-        if (delay !== null) {
-          await sleep(delay);
-          continue;
-        }
+      const delay = await strategy.onRetry(error, attempt);
+      if (delay !== null) {
+        await sleep(delay);
+        continue;
       }
 
       throw error;
     }
 
-    strategy?.reset?.();
+    strategy.reset?.();
 
     return response;
   }
@@ -336,10 +320,9 @@ export async function doStreamFetch(
 ): Promise<Response> {
   const fetchFn = config.fetch ?? fetch;
   const timeout = config.timeout ?? DEFAULT_TIMEOUT;
-  const baseStrategy = config.retryStrategy;
-  const strategy = hasFork(baseStrategy) ? baseStrategy.fork() : baseStrategy;
+  const strategy = (config.retryStrategy ?? noRetry())();
 
-  if (strategy?.beforeRequest) {
+  if (strategy.beforeRequest) {
     const delay = await strategy.beforeRequest();
     if (delay > 0) {
       await sleep(delay);

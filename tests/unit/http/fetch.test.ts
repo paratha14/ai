@@ -1,18 +1,24 @@
 import { describe, expect, test, beforeEach, afterEach, spyOn } from 'bun:test';
 import { doFetch, doStreamFetch, warnInsecureUrl } from '../../../src/http/fetch.ts';
-import type { RetryStrategy } from '../../../src/types/provider.ts';
+import type { RetryStrategy, RetryStrategyFactory } from '../../../src/types/provider.ts';
 import { UPPError, ErrorCode } from '../../../src/types/errors.ts';
 
-class RetryAfterCapture implements RetryStrategy {
-  retryAfterSeconds?: number;
+function createRetryAfterCapture(): { factory: RetryStrategyFactory; getSeconds: () => number | undefined } {
+  let retryAfterSeconds: number | undefined;
 
-  setRetryAfter(seconds: number): void {
-    this.retryAfterSeconds = seconds;
-  }
+  const factory: RetryStrategyFactory = () => ({
+    setRetryAfter(seconds: number): void {
+      retryAfterSeconds = seconds;
+    },
+    onRetry(_error: UPPError, _attempt: number): number | null {
+      return null;
+    },
+  });
 
-  onRetry(_error: UPPError, _attempt: number): number | null {
-    return null;
-  }
+  return {
+    factory,
+    getSeconds: () => retryAfterSeconds,
+  };
 }
 
 describe('doFetch', () => {
@@ -29,39 +35,59 @@ describe('doFetch', () => {
       { preconnect: (_input: string | URL) => undefined }
     );
 
-    class CountingStrategy implements RetryStrategy {
-      beforeCount = 0;
-      retryCount = 0;
+    let beforeCount = 0;
+    let retryCount = 0;
 
+    const countingStrategy: RetryStrategyFactory = () => ({
       beforeRequest(): number {
-        this.beforeCount += 1;
+        beforeCount += 1;
         return 0;
-      }
-
+      },
       onRetry(_error: UPPError, attempt: number): number | null {
-        this.retryCount += 1;
+        retryCount += 1;
         return attempt < 2 ? 0 : null;
-      }
-    }
-
-    const strategy = new CountingStrategy();
+      },
+    });
 
     const response = await doFetch(
       'https://example.com',
       { method: 'GET' },
-      { fetch: fetchFn, retryStrategy: strategy },
+      { fetch: fetchFn, retryStrategy: countingStrategy },
       'mock',
       'llm'
     );
 
     expect(response.ok).toBe(true);
     expect(callCount).toBe(2);
-    expect(strategy.beforeCount).toBe(2);
-    expect(strategy.retryCount).toBe(1);
+    expect(beforeCount).toBe(2);
+    expect(retryCount).toBe(1);
+  });
+
+  test('does not retry when retryStrategy is omitted', async () => {
+    let callCount = 0;
+    const fetchFn: typeof fetch = Object.assign(
+      async () => {
+        callCount += 1;
+        return new Response('fail', { status: 500 });
+      },
+      { preconnect: (_input: string | URL) => undefined }
+    );
+
+    await expect(
+      doFetch(
+        'https://example.com',
+        { method: 'GET' },
+        { fetch: fetchFn },
+        'mock',
+        'llm'
+      )
+    ).rejects.toBeInstanceOf(UPPError);
+
+    expect(callCount).toBe(1);
   });
 
   test('parses Retry-After HTTP-date headers', async () => {
-    const strategy = new RetryAfterCapture();
+    const { factory, getSeconds } = createRetryAfterCapture();
     const httpDate = new Date(Date.now() + 1500).toUTCString();
 
     const fetchFn: typeof fetch = Object.assign(
@@ -79,7 +105,7 @@ describe('doFetch', () => {
       await doFetch(
         'https://example.com',
         { method: 'GET' },
-        { fetch: fetchFn, retryStrategy: strategy },
+        { fetch: fetchFn, retryStrategy: factory },
         'mock',
         'llm'
       );
@@ -88,14 +114,15 @@ describe('doFetch', () => {
       expect(error).toBeInstanceOf(UPPError);
     }
 
-    expect(strategy.retryAfterSeconds).toBeDefined();
-    if (strategy.retryAfterSeconds !== undefined) {
-      expect(strategy.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    const seconds = getSeconds();
+    expect(seconds).toBeDefined();
+    if (seconds !== undefined) {
+      expect(seconds).toBeGreaterThanOrEqual(1);
     }
   });
 
   test('clamps Retry-After seconds to non-negative', async () => {
-    const strategy = new RetryAfterCapture();
+    const { factory, getSeconds } = createRetryAfterCapture();
     const fetchFn: typeof fetch = Object.assign(
       async () =>
         new Response(JSON.stringify({ error: { message: 'rate limit' } }), {
@@ -111,17 +138,17 @@ describe('doFetch', () => {
       doFetch(
         'https://example.com',
         { method: 'GET' },
-        { fetch: fetchFn, retryStrategy: strategy },
+        { fetch: fetchFn, retryStrategy: factory },
         'mock',
         'llm'
       )
     ).rejects.toBeInstanceOf(UPPError);
 
-    expect(strategy.retryAfterSeconds).toBe(0);
+    expect(getSeconds()).toBe(0);
   });
 
   test('clamps overly large Retry-After values', async () => {
-    const strategy = new RetryAfterCapture();
+    const { factory, getSeconds } = createRetryAfterCapture();
     const fetchFn: typeof fetch = Object.assign(
       async () =>
         new Response(JSON.stringify({ error: { message: 'rate limit' } }), {
@@ -137,20 +164,21 @@ describe('doFetch', () => {
       doFetch(
         'https://example.com',
         { method: 'GET' },
-        { fetch: fetchFn, retryStrategy: strategy },
+        { fetch: fetchFn, retryStrategy: factory },
         'mock',
         'llm'
       )
     ).rejects.toBeInstanceOf(UPPError);
 
-    expect(strategy.retryAfterSeconds).toBeDefined();
-    if (strategy.retryAfterSeconds !== undefined) {
-      expect(strategy.retryAfterSeconds).toBeLessThan(999999);
+    const seconds = getSeconds();
+    expect(seconds).toBeDefined();
+    if (seconds !== undefined) {
+      expect(seconds).toBeLessThan(999999);
     }
   });
 
   test('respects retryAfterMaxSeconds override', async () => {
-    const strategy = new RetryAfterCapture();
+    const { factory, getSeconds } = createRetryAfterCapture();
     const fetchFn: typeof fetch = Object.assign(
       async () =>
         new Response(JSON.stringify({ error: { message: 'rate limit' } }), {
@@ -166,13 +194,13 @@ describe('doFetch', () => {
       doFetch(
         'https://example.com',
         { method: 'GET' },
-        { fetch: fetchFn, retryStrategy: strategy, retryAfterMaxSeconds: 5 },
+        { fetch: fetchFn, retryStrategy: factory, retryAfterMaxSeconds: 5 },
         'mock',
         'llm'
       )
     ).rejects.toBeInstanceOf(UPPError);
 
-    expect(strategy.retryAfterSeconds).toBe(5);
+    expect(getSeconds()).toBe(5);
   });
 
   test('times out when fetch does not resolve', async () => {

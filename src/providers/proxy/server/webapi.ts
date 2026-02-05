@@ -408,9 +408,8 @@ export function bindTools(
  *
  * @example API Gateway with authentication
  * ```typescript
- * import { llm } from '@providerprotocol/ai';
+ * import { llm, exponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai';
  * import { anthropic } from '@providerprotocol/ai/anthropic';
- * import { ExponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai/http';
  * import { parseBody, toJSON, toSSE, toError } from '@providerprotocol/ai/proxy';
  *
  * // Your platform's user validation
@@ -424,7 +423,7 @@ export function bindTools(
  *   model: anthropic('claude-sonnet-4-20250514'),
  *   config: {
  *     apiKey: new RoundRobinKeys([process.env.ANTHROPIC_KEY_1!, process.env.ANTHROPIC_KEY_2!]),
- *     retryStrategy: new ExponentialBackoff({ maxAttempts: 3 }),
+ *     retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
  *   },
  * });
  *

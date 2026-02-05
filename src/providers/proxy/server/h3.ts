@@ -248,9 +248,8 @@ export function sendError(message: string, status: number, event: H3Event): { er
  * ```typescript
  * // server/api/ai.post.ts
  * import { sendStream } from 'h3';
- * import { llm } from '@providerprotocol/ai';
+ * import { llm, exponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai';
  * import { anthropic } from '@providerprotocol/ai/anthropic';
- * import { ExponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai/http';
  * import { parseBody, h3 as h3Adapter } from '@providerprotocol/ai/proxy';
  *
  * // Server manages AI provider keys - users never see them
@@ -261,7 +260,7 @@ export function sendError(message: string, status: number, event: H3Event): { er
  *       process.env.ANTHROPIC_KEY_1!,
  *       process.env.ANTHROPIC_KEY_2!,
  *     ]),
- *     retryStrategy: new ExponentialBackoff({ maxAttempts: 3 }),
+ *     retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
  *   },
  * });
  *

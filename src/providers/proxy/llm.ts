@@ -218,15 +218,14 @@ function turnJSONToLLMResponse(data: TurnJSON): LLMResponse {
  *
  * @example
  * ```typescript
- * import { llm } from '@providerprotocol/ai';
+ * import { llm, exponentialBackoff } from '@providerprotocol/ai';
  * import { proxy } from '@providerprotocol/ai/proxy';
- * import { ExponentialBackoff } from '@providerprotocol/ai/http';
  *
  * const claude = llm({
  *   model: proxy('https://api.myplatform.com/ai'),
  *   config: {
  *     headers: { 'Authorization': 'Bearer user-token' },
- *     retryStrategy: new ExponentialBackoff({ maxAttempts: 3 }),
+ *     retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
  *     timeout: 30000,
  *   },
  * });

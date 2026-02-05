@@ -172,9 +172,8 @@ export function sendError(message: string, status: number, res: ExpressResponse)
  * @example API Gateway with authentication
  * ```typescript
  * import express from 'express';
- * import { llm } from '@providerprotocol/ai';
+ * import { llm, exponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai';
  * import { anthropic } from '@providerprotocol/ai/anthropic';
- * import { ExponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai/http';
  * import { parseBody } from '@providerprotocol/ai/proxy';
  * import { express as expressAdapter } from '@providerprotocol/ai/proxy/server';
  *
@@ -195,7 +194,7 @@ export function sendError(message: string, status: number, res: ExpressResponse)
  *   model: anthropic('claude-sonnet-4-20250514'),
  *   config: {
  *     apiKey: new RoundRobinKeys([process.env.ANTHROPIC_KEY_1!, process.env.ANTHROPIC_KEY_2!]),
- *     retryStrategy: new ExponentialBackoff({ maxAttempts: 3 }),
+ *     retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
  *   },
  * });
  *

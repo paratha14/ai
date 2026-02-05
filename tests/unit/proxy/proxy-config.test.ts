@@ -2,7 +2,7 @@ import { test, expect, describe, beforeAll, afterAll } from 'bun:test';
 import type { Server } from 'bun';
 import { llm } from '../../../src/index.ts';
 import { proxy } from '../../../src/proxy/index.ts';
-import { ExponentialBackoff } from '../../../src/http/index.ts';
+import { exponentialBackoff } from '../../../src/http/index.ts';
 
 type BunServer = Server<unknown>;
 
@@ -169,7 +169,7 @@ describe('Proxy Config Integration Tests', () => {
       const instance = llm({
         model: proxyProvider('default'),
         config: {
-          retryStrategy: new ExponentialBackoff({
+          retryStrategy: exponentialBackoff({
             maxAttempts: 5,
             baseDelay: 10,
             maxDelay: 100,

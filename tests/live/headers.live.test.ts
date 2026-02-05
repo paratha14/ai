@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { llm } from "../../src/index.ts";
+import { llm, noRetry } from "../../src/index.ts";
 import { anthropic } from "../../src/anthropic/index.ts";
 import { openai } from "../../src/openai/index.ts";
 import { google } from "../../src/google/index.ts";
@@ -30,6 +30,7 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Headers", () => {
         headers: {
           "X-Custom-Test": "test-value",
         },
+        retryStrategy: noRetry(),
       },
     });
 

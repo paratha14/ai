@@ -19,7 +19,7 @@ import {
 } from '../../../src/types/messages.ts';
 import { createTurn, emptyUsage } from '../../../src/types/turn.ts';
 import { llm } from '../../../src/index.ts';
-import { ExponentialBackoff } from '../../../src/http/index.ts';
+import { exponentialBackoff } from '../../../src/http/index.ts';
 import * as fetchModule from '../../../src/http/fetch.ts';
 
 describe('Proxy Serialization Utilities', () => {
@@ -422,7 +422,7 @@ describe('Proxy LLM Handler', () => {
 
       const doFetchSpy = spyOn(fetchModule, 'doFetch').mockResolvedValue(mockResponse);
 
-      const retryStrategy = new ExponentialBackoff({ maxAttempts: 3 });
+      const retryStrategy = exponentialBackoff({ maxAttempts: 3 });
       const proxyProvider = proxy({ endpoint: 'http://localhost:3000' });
       const instance = llm({
         model: proxyProvider('default'),
@@ -526,7 +526,7 @@ describe('Proxy LLM Handler', () => {
 
       const doStreamFetchSpy = spyOn(fetchModule, 'doStreamFetch').mockResolvedValue(mockResponse);
 
-      const retryStrategy = new ExponentialBackoff({ maxAttempts: 2 });
+      const retryStrategy = exponentialBackoff({ maxAttempts: 2 });
       const proxyProvider = proxy({ endpoint: 'http://localhost:3000' });
       const instance = llm({
         model: proxyProvider('default'),

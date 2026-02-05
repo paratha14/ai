@@ -506,16 +506,15 @@ const result = await editor.edit({
 ## Configuration
 
 ```typescript
-import { llm } from '@providerprotocol/ai';
+import { llm, exponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai';
 import { openai } from '@providerprotocol/ai/openai';
-import { ExponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai/http';
 
 const instance = llm({
   model: openai('gpt-4o'),
   config: {
     apiKey: new RoundRobinKeys(['sk-key1', 'sk-key2']),
     timeout: 30000,
-    retryStrategy: new ExponentialBackoff({ maxAttempts: 3 }),
+    retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
   },
   params: {
     temperature: 0.7,
@@ -592,15 +591,14 @@ new DynamicKey(async () => fetchKeyFromVault())
 
 ```typescript
 import {
-  ExponentialBackoff,
-  LinearBackoff,
-  NoRetry,
-  TokenBucket,
-  RetryAfterStrategy,
-} from '@providerprotocol/ai/http';
+  exponentialBackoff,
+  linearBackoff,
+  noRetry,
+  retryAfterStrategy,
+} from '@providerprotocol/ai';
 
 // Exponential: 1s, 2s, 4s...
-new ExponentialBackoff({
+exponentialBackoff({
   maxAttempts: 5,
   baseDelay: 1000,
   maxDelay: 30000,
@@ -608,16 +606,13 @@ new ExponentialBackoff({
 })
 
 // Linear: 1s, 2s, 3s...
-new LinearBackoff({ maxAttempts: 3, delay: 1000 })
-
-// Rate limiting with token bucket
-new TokenBucket({ maxTokens: 10, refillRate: 1 })
+linearBackoff({ maxAttempts: 3, delay: 1000 })
 
 // Respect server Retry-After headers
-new RetryAfterStrategy({ maxAttempts: 3, fallbackDelay: 5000 })
+retryAfterStrategy({ maxAttempts: 3, fallbackDelay: 5000 })
 
 // No retries
-new NoRetry()
+noRetry()
 ```
 
 **Retryable Errors:** `RATE_LIMITED`, `NETWORK_ERROR`, `TIMEOUT`, `PROVIDER_ERROR`
@@ -1008,9 +1003,8 @@ Build AI API gateways with your own authentication. Users authenticate with your
 ### Server (Bun/Deno/Cloudflare Workers)
 
 ```typescript
-import { llm } from '@providerprotocol/ai';
+import { llm, exponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai';
 import { anthropic } from '@providerprotocol/ai/anthropic';
-import { ExponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai/http';
 import { parseBody, toJSON, toSSE, toError } from '@providerprotocol/ai/proxy';
 
 // Server manages AI provider keys - users never see them
@@ -1018,7 +1012,7 @@ const claude = llm({
   model: anthropic('claude-sonnet-4-20250514'),
   config: {
     apiKey: new RoundRobinKeys([process.env.ANTHROPIC_KEY_1!, process.env.ANTHROPIC_KEY_2!]),
-    retryStrategy: new ExponentialBackoff({ maxAttempts: 3 }),
+    retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
   },
 });
 
@@ -1048,15 +1042,14 @@ Bun.serve({
 Clients authenticate with your platform token. They get automatic retry on network failures to your proxy.
 
 ```typescript
-import { llm } from '@providerprotocol/ai';
+import { llm, exponentialBackoff } from '@providerprotocol/ai';
 import { proxy } from '@providerprotocol/ai/proxy';
-import { ExponentialBackoff } from '@providerprotocol/ai/http';
 
 const claude = llm({
   model: proxy('https://api.yourplatform.com/ai'),
   config: {
     headers: { 'Authorization': 'Bearer user-platform-token' },
-    retryStrategy: new ExponentialBackoff({ maxAttempts: 3 }),
+    retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
     timeout: 30000,
   },
 });
@@ -1408,8 +1401,10 @@ Full type safety with no `any` types. All provider parameters are typed:
 import type {
   // Core types
   Turn,
+  TurnJSON,
   Message,
   Tool,
+  ToolInput,
   TokenUsage,
 
   // Streaming
@@ -1465,6 +1460,45 @@ import {
 if (isZodSchema(schema)) {
   const jsonSchema = zodToJSONSchemaSync(schema);
 }
+```
+
+**Error & ID Utilities:**
+
+```typescript
+import {
+  toError,
+  isCancelledError,
+  generateId,
+  generateShortId,
+} from '@providerprotocol/ai/utils';
+
+// Convert unknown thrown values to Error instances
+const error = toError(unknownValue);
+
+// Check if an error is a cancellation/abort error
+if (isCancelledError(error)) {
+  console.log('Request was cancelled');
+}
+
+// Generate IDs
+const uuid = generateId();                    // UUID v4: "a1b2c3d4-..."
+const shortId = generateShortId('req');       // "req_abc123xyz789"
+```
+
+**Provider-Specific Types:**
+
+```typescript
+// OpenAI
+import type { OpenAIHeaders, OpenAIImageParams } from '@providerprotocol/ai/openai';
+
+// Google
+import type { GoogleImagenParams } from '@providerprotocol/ai/google';
+
+// Ollama
+import type { OllamaHeaders } from '@providerprotocol/ai/ollama';
+
+// OpenRouter
+import type { OpenRouterProviderOptions } from '@providerprotocol/ai/openrouter';
 ```
 
 **Type-Safe Enums:**

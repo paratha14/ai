@@ -186,9 +186,8 @@ export function sendError(message: string, status: number, reply: FastifyReply):
  * @example API Gateway with authentication
  * ```typescript
  * import Fastify from 'fastify';
- * import { llm } from '@providerprotocol/ai';
+ * import { llm, exponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai';
  * import { anthropic } from '@providerprotocol/ai/anthropic';
- * import { ExponentialBackoff, RoundRobinKeys } from '@providerprotocol/ai/http';
  * import { parseBody } from '@providerprotocol/ai/proxy';
  * import { fastify as fastifyAdapter } from '@providerprotocol/ai/proxy/server';
  *
@@ -199,7 +198,7 @@ export function sendError(message: string, status: number, reply: FastifyReply):
  *   model: anthropic('claude-sonnet-4-20250514'),
  *   config: {
  *     apiKey: new RoundRobinKeys([process.env.ANTHROPIC_KEY_1!, process.env.ANTHROPIC_KEY_2!]),
- *     retryStrategy: new ExponentialBackoff({ maxAttempts: 3 }),
+ *     retryStrategy: exponentialBackoff({ maxAttempts: 3 }),
  *   },
  * });
  *

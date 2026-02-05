@@ -47,21 +47,24 @@ export interface KeyStrategy {
 /**
  * Retry strategy interface for handling request failures.
  *
- * Implement this interface to provide custom retry logic for
- * handling rate limits, transient errors, and other failures.
+ * Each request receives a fresh strategy instance via the factory pattern,
+ * ensuring complete isolation between concurrent requests.
  *
  * @example
  * ```typescript
- * class ExponentialBackoff implements RetryStrategy {
- *   private maxAttempts = 5;
- *   private baseDelay = 1000;
+ * // Using built-in strategies
+ * const provider = createOpenAI({
+ *   retryStrategy: exponentialBackoff({ maxAttempts: 5 })
+ * });
  *
- *   onRetry(error: UPPError, attempt: number): number | null {
- *     if (attempt > this.maxAttempts) return null;
+ * // Custom strategy factory
+ * const customRetry = (): RetryStrategy => ({
+ *   onRetry(error, attempt) {
+ *     if (attempt > 3) return null;
  *     if (error.code !== 'RATE_LIMITED') return null;
- *     return this.baseDelay * Math.pow(2, attempt - 1);
+ *     return 1000 * Math.pow(2, attempt - 1);
  *   }
- * }
+ * });
  * ```
  */
 export interface RetryStrategy {
@@ -75,7 +78,7 @@ export interface RetryStrategy {
   onRetry(error: UPPError, attempt: number): number | null | Promise<number | null>;
 
   /**
-   * Called before each request. Can be used to implement pre-emptive rate limiting.
+   * Called before each request. Can be used to implement pre-emptive delays.
    *
    * @returns Delay in ms to wait before making the request, or 0 to proceed immediately
    */
@@ -85,7 +88,34 @@ export interface RetryStrategy {
    * Reset the strategy state (e.g., after a successful request).
    */
   reset?(): void;
+
+  /**
+   * Sets the retry delay from a Retry-After header value.
+   * Only applicable to strategies that honor server-provided retry timing.
+   *
+   * @param seconds - The Retry-After value in seconds
+   */
+  setRetryAfter?(seconds: number): void;
 }
+
+/**
+ * Factory function that creates a fresh RetryStrategy instance per request.
+ *
+ * Using a factory ensures each `.stream()`, `.generate()`, `.embed()` call
+ * gets its own isolated retry state, preventing cross-request contamination.
+ *
+ * @example
+ * ```typescript
+ * // Built-in factory
+ * const retry = exponentialBackoff({ maxAttempts: 3 });
+ *
+ * // Custom factory
+ * const customRetry: RetryStrategyFactory = () => ({
+ *   onRetry: (error, attempt) => attempt <= 3 ? 1000 : null
+ * });
+ * ```
+ */
+export type RetryStrategyFactory = () => RetryStrategy;
 
 /**
  * Provider identity shape for structural typing.
@@ -112,7 +142,7 @@ export interface ProviderIdentity {
  * const config: ProviderConfig = {
  *   apiKey: process.env.OPENAI_API_KEY,
  *   timeout: 30000,
- *   retryStrategy: new ExponentialBackoff()
+ *   retryStrategy: exponentialBackoff()
  * };
  *
  * // Or with a key strategy for key rotation
@@ -144,8 +174,8 @@ export interface ProviderConfig {
   /** API version override (provider-specific) */
   apiVersion?: string;
 
-  /** Retry strategy for handling failures and rate limits */
-  retryStrategy?: RetryStrategy;
+  /** Retry strategy factory for handling failures and rate limits */
+  retryStrategy?: RetryStrategyFactory;
 
   /**
    * Custom headers to include in API requests.
