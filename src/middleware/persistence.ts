@@ -209,14 +209,25 @@ export function persistenceMiddleware(options: PersistenceOptions): Middleware {
       ctx.state.set(STATE_KEY_THREAD, thread);
 
       if (thread.messages.length > 0) {
-        const existingIds = new Set(ctx.request.messages.map((message) => message.id));
-        const missing = thread.messages.filter((message) => !existingIds.has(message.id));
-        if (missing.length > 0) {
-          ctx.request.messages.unshift(...missing);
-          const currentIndex = ctx.state.get(TURN_START_INDEX_KEY);
-          const nextIndex = (typeof currentIndex === 'number' ? currentIndex : 0) + missing.length;
-          ctx.state.set(TURN_START_INDEX_KEY, nextIndex);
+        const requestById = new Map(ctx.request.messages.map((message) => [message.id, message]));
+        const threadIds = new Set(thread.messages.map((message) => message.id));
+        const mergedMessages: LLMRequest['messages'] = [];
+
+        for (const message of thread.messages) {
+          mergedMessages.push(requestById.get(message.id) ?? message);
         }
+
+        for (const message of ctx.request.messages) {
+          if (!threadIds.has(message.id)) {
+            mergedMessages.push(message);
+          }
+        }
+
+        ctx.request.messages.splice(0, ctx.request.messages.length, ...mergedMessages);
+
+        const currentIndex = ctx.state.get(TURN_START_INDEX_KEY);
+        const nextIndex = (typeof currentIndex === 'number' ? currentIndex : 0) + thread.messages.length;
+        ctx.state.set(TURN_START_INDEX_KEY, nextIndex);
       }
     },
 
