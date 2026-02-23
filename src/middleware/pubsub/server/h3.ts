@@ -11,33 +11,23 @@ import type { PubSubAdapter } from '../types.ts';
 import { runSubscriberStream } from './shared.ts';
 
 /**
- * H3 Event interface (minimal type to avoid dependency).
- */
-interface H3Event {
-  node: {
-    res: {
-      setHeader(name: string, value: string): void;
-      write(chunk: string): boolean;
-      end(): void;
-      on(event: 'close', listener: () => void): void;
-    };
-  };
-}
-
-/**
- * Stream buffered and live events to an H3 event response.
+ * Creates a ReadableStream that replays buffered events and subscribes to live events.
  *
- * Handles reconnection for H3/Nuxt routes:
- * 1. Replays buffered events from the adapter
- * 2. Subscribes to live events until completion signal
- * 3. Ends when stream completes or client disconnects
+ * Use with H3's `sendStream` for proper chunked streaming that works
+ * correctly in production (Nitro builds, reverse proxies, compression):
+ *
+ * ```typescript
+ * import { sendStream } from 'h3';
+ * return sendStream(event, h3.createSubscriberSSEStream(streamId, adapter));
+ * ```
  *
  * @param streamId - The stream ID to subscribe to
  * @param adapter - The pub-sub adapter instance
- * @param event - H3 event object
+ * @returns A ReadableStream of SSE-formatted data
  *
  * @example
  * ```typescript
+ * import { sendStream } from 'h3';
  * import { llm } from '@providerprotocol/ai';
  * import { anthropic } from '@providerprotocol/ai/anthropic';
  * import { pubsubMiddleware, memoryAdapter } from '@providerprotocol/ai/middleware/pubsub';
@@ -56,37 +46,54 @@ interface H3Event {
  *     model.stream(input).then(turn => saveToDatabase(conversationId, turn));
  *   }
  *
- *   return h3.streamSubscriber(conversationId, adapter, event);
+ *   return sendStream(event, h3.createSubscriberSSEStream(conversationId, adapter));
  * });
  * ```
  */
-export async function streamSubscriber(
+export function createSubscriberSSEStream(
   streamId: string,
   adapter: PubSubAdapter,
-  event: H3Event
-): Promise<void> {
-  const res = event.node.res;
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
   const abortController = new AbortController();
-  res.on('close', () => abortController.abort());
+  let closed = false;
 
-  await runSubscriberStream(
-    streamId,
-    adapter,
-    {
-      write: (data: string) => res.write(data),
-      end: () => res.end(),
+  return new ReadableStream({
+    async start(controller) {
+      await runSubscriberStream(
+        streamId,
+        adapter,
+        {
+          write: (data: string) => {
+            if (closed) {
+              return;
+            }
+            controller.enqueue(encoder.encode(data));
+          },
+          end: () => {
+            if (closed) {
+              return;
+            }
+            closed = true;
+            try {
+              controller.close();
+            } catch {
+              // Ignore close errors after cancellation
+            }
+          },
+        },
+        { signal: abortController.signal }
+      );
     },
-    { signal: abortController.signal }
-  );
+    cancel() {
+      abortController.abort();
+    },
+  });
 }
 
 /**
  * H3 adapter namespace for pub-sub server utilities.
  */
 export const h3 = {
-  streamSubscriber,
+  createSubscriberSSEStream,
 };

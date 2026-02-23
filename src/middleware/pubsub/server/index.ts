@@ -87,6 +87,7 @@ export type { PubSubAdapter } from '../types.ts';
  *
  * @example H3/Nuxt
  * ```typescript
+ * import { sendStream } from 'h3';
  * import { h3 } from '@providerprotocol/ai/middleware/pubsub/server';
  *
  * export default defineEventHandler(async (event) => {
@@ -101,7 +102,7 @@ export type { PubSubAdapter } from '../types.ts';
  *     model.stream(messages).then(turn => saveToDatabase(turn));
  *   }
  *
- *   return h3.streamSubscriber(streamId, adapter, event);
+ *   return sendStream(event, h3.createSubscriberSSEStream(streamId, adapter));
  * });
  * ```
  */
