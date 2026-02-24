@@ -862,6 +862,8 @@ const redisAdapter: PubSubAdapter = {
   publish(streamId, event) { /* broadcast to subscribers */ },
   setFinalData(streamId, data) { /* store final Turn data */ },
   async remove(streamId) { /* notify onFinalData, onComplete, then delete */ },
+  async clear(streamId) { /* clear events without removing stream (used on retry) */ },
+  getCursorBase(streamId) { /* cursor offset after clear, or 0 */ return 0; },
 };
 ```
 

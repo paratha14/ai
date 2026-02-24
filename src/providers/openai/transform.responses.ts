@@ -41,6 +41,7 @@ import type {
   OpenAIResponsesResponse,
   OpenAIResponsesStreamEvent,
   OpenAIReasoningOutput,
+  OpenAICompactionOutput,
 } from './types.ts';
 
 /**
@@ -233,6 +234,7 @@ function transformMessage(message: Message): OpenAIResponsesInputItem[] {
       | {
           functionCallItems?: Array<{ id: string; call_id: string; name: string; arguments: string }>;
           reasoningEncryptedContent?: string;
+          compactionItems?: Array<{ id: string; data?: string }>;
         }
       | undefined;
     const functionCallItems = openaiMeta?.functionCallItems;
@@ -252,6 +254,16 @@ function transformMessage(message: Message): OpenAIResponsesInputItem[] {
         });
       } catch {
         // Invalid JSON - skip reasoning item
+      }
+    }
+
+    if (openaiMeta?.compactionItems && openaiMeta.compactionItems.length > 0) {
+      for (const compaction of openaiMeta.compactionItems) {
+        items.push({
+          type: 'compaction',
+          id: compaction.id,
+          data: compaction.data,
+        });
       }
     }
 
@@ -483,6 +495,7 @@ export function transformResponse(data: OpenAIResponsesResponse): LLMResponse {
   let hadRefusal = false;
   let structuredData: unknown;
   let reasoningEncryptedContent: string | undefined;
+  const compactionItems: Array<{ id: string; data?: string }> = [];
 
   for (const item of data.output) {
     if (item.type === 'message') {
@@ -545,6 +558,12 @@ export function transformResponse(data: OpenAIResponsesResponse): LLMResponse {
         summary: reasoningItem.summary,
         encrypted_content: reasoningItem.encrypted_content,
       });
+    } else if (item.type === 'compaction') {
+      const compactionItem = item as OpenAICompactionOutput;
+      compactionItems.push({
+        id: compactionItem.id,
+        data: compactionItem.data,
+      });
     }
   }
 
@@ -562,6 +581,8 @@ export function transformResponse(data: OpenAIResponsesResponse): LLMResponse {
           functionCallItems:
             functionCallItems.length > 0 ? functionCallItems : undefined,
           reasoningEncryptedContent,
+          compactionItems:
+            compactionItems.length > 0 ? compactionItems : undefined,
         },
       },
     }
@@ -634,6 +655,8 @@ export interface ResponsesStreamState {
   hadRefusal: boolean;
   /** Serialized reasoning item for multi-turn context preservation (includes encrypted_content) */
   reasoningEncryptedContent?: string;
+  /** Compaction items from server-side context compaction */
+  compactionItems: Array<{ id: string; data?: string }>;
 }
 
 /**
@@ -655,6 +678,7 @@ export function createStreamState(): ResponsesStreamState {
     outputTokens: 0,
     cacheReadTokens: 0,
     hadRefusal: false,
+    compactionItems: [],
   };
 }
 
@@ -759,6 +783,12 @@ export function transformStreamEvent(
           id: reasoningItem.id,
           summary: reasoningItem.summary,
           encrypted_content: reasoningItem.encrypted_content,
+        });
+      } else if (event.item.type === 'compaction') {
+        const compactionItem = event.item as OpenAICompactionOutput;
+        state.compactionItems.push({
+          id: compactionItem.id,
+          data: compactionItem.data,
         });
       }
       events.push({
@@ -969,6 +999,8 @@ export function buildResponseFromState(state: ResponsesStreamState): LLMResponse
           functionCallItems:
             functionCallItems.length > 0 ? functionCallItems : undefined,
           reasoningEncryptedContent: state.reasoningEncryptedContent,
+          compactionItems:
+            state.compactionItems.length > 0 ? state.compactionItems : undefined,
         },
       },
     }

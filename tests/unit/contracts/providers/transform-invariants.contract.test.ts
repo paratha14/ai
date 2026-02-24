@@ -1,11 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { transformRequest as transformAnthropicRequest } from '../../../../src/providers/anthropic/transform.ts';
 import { transformRequest as transformOpenAICompletionsRequest } from '../../../../src/providers/openai/transform.completions.ts';
+import {
+  transformRequest as transformOpenAIResponsesRequest,
+  transformResponse as transformOpenAIResponsesResponse,
+} from '../../../../src/providers/openai/transform.responses.ts';
 import { transformRequest as transformOpenRouterCompletionsRequest } from '../../../../src/providers/openrouter/transform.completions.ts';
 import { transformRequest as transformXAICompletionsRequest } from '../../../../src/providers/xai/transform.completions.ts';
 import type { LLMRequest } from '../../../../src/types/llm.ts';
 import { AssistantMessage, ToolResultMessage, UserMessage } from '../../../../src/types/messages.ts';
 import type { AnthropicLLMParams } from '../../../../src/providers/anthropic/types.ts';
+import type { OpenAIResponsesParams } from '../../../../src/providers/openai/types.ts';
+import type { OpenAIResponsesResponse } from '../../../../src/providers/openai/types.ts';
 import type { XAICompletionsParams } from '../../../../src/providers/xai/types.ts';
 
 describe('Provider transform contracts', () => {
@@ -240,5 +246,74 @@ describe('Provider transform contracts', () => {
       expect(transformed.response_format.json_schema.schema.additionalProperties).toBe(false);
       expect(transformed.response_format.json_schema.schema.required).toEqual(['verdict']);
     }
+  });
+
+  test('OpenAI responses context_management compaction param is forwarded in request', () => {
+    const request: LLMRequest<OpenAIResponsesParams> = {
+      messages: [new UserMessage('Summarize the conversation so far.')],
+      params: {
+        context_management: [{ type: 'compaction', compact_threshold: 10000 }],
+      },
+      config: {},
+    };
+
+    const transformed = transformOpenAIResponsesRequest(request, 'gpt-4o');
+
+    expect(transformed.context_management).toEqual([
+      { type: 'compaction', compact_threshold: 10000 },
+    ]);
+  });
+
+  test('OpenAI responses compaction output items are preserved in metadata and re-sent as input', () => {
+    const mockResponse: OpenAIResponsesResponse = {
+      id: 'resp_compaction_test',
+      object: 'response',
+      created_at: Date.now(),
+      model: 'gpt-4o',
+      output: [
+        {
+          type: 'message',
+          id: 'msg_1',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Here is the summary.' }],
+          status: 'completed',
+        },
+        {
+          type: 'compaction',
+          id: 'cmpt_abc123',
+          status: 'completed',
+          data: 'opaque-encrypted-compaction-data',
+        },
+      ],
+      usage: {
+        input_tokens: 500,
+        output_tokens: 50,
+        total_tokens: 550,
+      },
+      status: 'completed',
+    };
+
+    const result = transformOpenAIResponsesResponse(mockResponse);
+
+    const openaiMeta = result.message.metadata?.openai as
+      | { compactionItems?: Array<{ id: string; data?: string }> }
+      | undefined;
+    expect(openaiMeta?.compactionItems).toEqual([
+      { id: 'cmpt_abc123', data: 'opaque-encrypted-compaction-data' },
+    ]);
+
+    const roundTripped = transformOpenAIResponsesRequest(
+      {
+        messages: [result.message, new UserMessage('Continue.')],
+        config: {},
+      },
+      'gpt-4o'
+    );
+
+    const inputItems = roundTripped.input as Array<{ type: string; id?: string; data?: string }>;
+    const compactionInput = inputItems.find((item) => item.type === 'compaction');
+    expect(compactionInput).toBeDefined();
+    expect(compactionInput?.id).toBe('cmpt_abc123');
+    expect(compactionInput?.data).toBe('opaque-encrypted-compaction-data');
   });
 });

@@ -739,6 +739,8 @@ export interface OpenAIResponsesRequest {
   parallel_tool_calls?: boolean;
   text?: OpenAIResponsesTextConfig;
   truncation?: 'auto' | 'disabled';
+  /** Context management for automatic compaction */
+  context_management?: Array<{ type: 'compaction'; compact_threshold: number }>;
   store?: boolean;
   metadata?: Record<string, string>;
   reasoning?: {
@@ -774,7 +776,8 @@ export type OpenAIResponsesInputItem =
   | OpenAIResponsesAssistantItem
   | OpenAIResponsesFunctionCallInputItem
   | OpenAIResponsesToolResultItem
-  | OpenAIResponsesReasoningInputItem;
+  | OpenAIResponsesReasoningInputItem
+  | OpenAIResponsesCompactionInputItem;
 
 /**
  * Reasoning input item for forwarding encrypted reasoning in multi-turn conversations.
@@ -789,6 +792,13 @@ export interface OpenAIResponsesReasoningInputItem {
   summary: Array<{ type: 'summary_text'; text: string }>;
   /** Encrypted reasoning content from previous response */
   encrypted_content?: string;
+}
+
+/** Compaction input item for forwarding opaque compaction data in multi-turn conversations */
+export interface OpenAIResponsesCompactionInputItem {
+  type: 'compaction';
+  id: string;
+  data?: string;
 }
 
 /** System or developer message input item */
@@ -943,7 +953,8 @@ export type OpenAIResponsesOutputItem =
   | OpenAIResponsesFunctionCallOutput
   | OpenAIResponsesImageGenerationOutput
   | OpenAIResponsesWebSearchOutput
-  | OpenAIReasoningOutput;
+  | OpenAIReasoningOutput
+  | OpenAICompactionOutput;
 
 /** Assistant message output item */
 export interface OpenAIResponsesMessageOutput {
@@ -987,6 +998,14 @@ export interface OpenAIReasoningOutput {
   summary: Array<{ type: 'summary_text'; text: string }>;
   status: 'completed' | 'in_progress' | null;
   encrypted_content?: string;
+}
+
+/** Compaction output item emitted when server-side context compaction occurs */
+export interface OpenAICompactionOutput {
+  type: 'compaction';
+  id: string;
+  status?: 'completed' | 'in_progress' | null;
+  data?: string;
 }
 
 /** Output content types (text or refusal) */

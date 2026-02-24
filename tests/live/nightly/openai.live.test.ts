@@ -83,6 +83,117 @@ describe.skipIf(!HAS_OPENAI_KEY)('OpenAI live nightly', () => {
     expect(turn.response.text).toContain('5');
   }, 90000);
 
+  test('previous_response_id chaining preserves response_id across turns', async () => {
+    const model = llm<OpenAIResponsesParams>({
+      model: openai(MODEL),
+      params: {
+        max_output_tokens: 100,
+        store: true,
+      },
+    });
+
+    const firstTurn = await model.generate('Say exactly: "ALPHA"');
+
+    const firstMeta = firstTurn.response.metadata?.openai as
+      | { response_id?: string }
+      | undefined;
+    expect(firstMeta?.response_id).toBeDefined();
+    expect(typeof firstMeta?.response_id).toBe('string');
+
+    const continuationModel = llm<OpenAIResponsesParams>({
+      model: openai(MODEL),
+      params: {
+        max_output_tokens: 100,
+        previous_response_id: firstMeta?.response_id,
+      },
+    });
+
+    const secondTurn = await continuationModel.generate('What was the exact word I asked you to say?');
+
+    const secondMeta = secondTurn.response.metadata?.openai as
+      | { response_id?: string }
+      | undefined;
+    expect(secondMeta?.response_id).toBeDefined();
+    expect(secondMeta?.response_id).not.toBe(firstMeta?.response_id);
+    expect(secondTurn.response.text.toLowerCase()).toContain('alpha');
+  }, 90000);
+
+  test('context_management compaction emits compaction items with low threshold', async () => {
+    const compactionParams: Partial<OpenAIResponsesParams> = {
+      max_output_tokens: 500,
+      store: true,
+      context_management: [{ type: 'compaction', compact_threshold: 1000 }],
+    };
+
+    type OpenAIMeta = { response_id?: string; compactionItems?: Array<{ id: string; data: string }> };
+
+    const firstModel = llm<OpenAIResponsesParams>({
+      model: openai(MODEL),
+      params: compactionParams as OpenAIResponsesParams,
+    });
+
+    const firstTurn = await firstModel.generate(
+      'Write a detailed paragraph about the history of computing, from Babbage to modern GPUs. Include dates, names, and technical details.'
+    );
+    const firstMeta = firstTurn.response.metadata?.openai as OpenAIMeta | undefined;
+    expect(firstMeta?.response_id).toBeDefined();
+
+    const secondModel = llm<OpenAIResponsesParams>({
+      model: openai(MODEL),
+      params: {
+        ...compactionParams,
+        previous_response_id: firstMeta?.response_id,
+      } as OpenAIResponsesParams,
+    });
+
+    const secondTurn = await secondModel.generate(
+      'Now write an equally detailed paragraph about the history of artificial intelligence, from Turing to transformers. Include dates, names, and technical details.'
+    );
+    const secondMeta = secondTurn.response.metadata?.openai as OpenAIMeta | undefined;
+    expect(secondMeta?.response_id).toBeDefined();
+
+    const thirdModel = llm<OpenAIResponsesParams>({
+      model: openai(MODEL),
+      params: {
+        ...compactionParams,
+        previous_response_id: secondMeta?.response_id,
+      } as OpenAIResponsesParams,
+    });
+
+    const thirdTurn = await thirdModel.generate(
+      'Write another detailed paragraph about the history of the internet, from ARPANET to modern cloud computing. Include dates and technical milestones.'
+    );
+    const thirdMeta = thirdTurn.response.metadata?.openai as OpenAIMeta | undefined;
+    expect(thirdMeta?.response_id).toBeDefined();
+
+    const fourthModel = llm<OpenAIResponsesParams>({
+      model: openai(MODEL),
+      params: {
+        ...compactionParams,
+        previous_response_id: thirdMeta?.response_id,
+      } as OpenAIResponsesParams,
+    });
+
+    const fourthTurn = await fourthModel.generate(
+      'Summarize everything we discussed about computing, AI, and the internet into key themes.'
+    );
+    const fourthMeta = fourthTurn.response.metadata?.openai as OpenAIMeta | undefined;
+    expect(fourthMeta?.response_id).toBeDefined();
+
+    // With a 1000-token threshold across 4 verbose turns, at least one should trigger compaction
+    const allCompactionItems = [
+      ...(firstMeta?.compactionItems ?? []),
+      ...(secondMeta?.compactionItems ?? []),
+      ...(thirdMeta?.compactionItems ?? []),
+      ...(fourthMeta?.compactionItems ?? []),
+    ];
+    expect(allCompactionItems.length).toBeGreaterThan(0);
+
+    const item = allCompactionItems[0]!;
+    expect(typeof item.id).toBe('string');
+    expect(item.id.startsWith('cmp_')).toBe(true);
+  }, 180000);
+
   test('invalid model returns normalized error', async () => {
     const model = llm<OpenAIResponsesParams>({
       model: openai(INVALID_MODEL),

@@ -1,15 +1,15 @@
 # Provider Protocol SDK (UPP) - LLM Reference Guide
 
 **Package**: `@providerprotocol/ai`
-**Version**: 0.0.40
+**Version**: 0.0.44
 **Runtime**: Bun/Node.js (ESM only)
 
 ## Overview
 
-Provider Protocol (UPP - Unified Provider Protocol) is a TypeScript SDK that provides a unified API for interacting with multiple AI providers. It eliminates provider fragmentation by offering one consistent interface across 9+ providers and 3 modalities.
+Provider Protocol (UPP - Unified Provider Protocol) is a TypeScript SDK that provides a unified API for interacting with multiple AI providers. It eliminates provider fragmentation by offering one consistent interface across 11 providers and 3 modalities.
 
 **Key Features:**
-- Unified interface for Anthropic, OpenAI, Google, xAI, Groq, Cerebras, Moonshot, Ollama, OpenRouter
+- Unified interface for Anthropic, OpenAI, Google, xAI, Groq, Cerebras, Moonshot, Ollama, OpenRouter, Responses (OpenResponses spec), Proxy
 - Three modalities: LLM inference, embeddings, image generation
 - Full streaming support with event-based API
 - Tool/function calling with automatic execution loops
@@ -80,10 +80,14 @@ claude.stream('Tell me a story').then((turn) => { /* save to DB */ });
 
 ### Factory Functions
 
-Three main factory functions create instances for each modality:
+Three main factory functions create instances for each modality, plus a factory for custom providers:
 
 ```typescript
-import { llm, embedding, image } from '@providerprotocol/ai';
+import { llm, embedding, image, createProvider } from '@providerprotocol/ai';
+
+// Alternative: namespace import
+import { ai } from '@providerprotocol/ai';
+const instance = ai.llm({ model: anthropic('claude-sonnet-4-20250514') });
 ```
 
 ### Provider Functions
@@ -100,6 +104,7 @@ import { cerebras } from '@providerprotocol/ai/cerebras';
 import { moonshot } from '@providerprotocol/ai/moonshot';
 import { ollama } from '@providerprotocol/ai/ollama';
 import { openrouter } from '@providerprotocol/ai/openrouter';
+import { responses } from '@providerprotocol/ai/responses';
 import { proxy } from '@providerprotocol/ai/proxy';
 ```
 
@@ -122,7 +127,7 @@ The package uses subpath exports to keep bundles small. Import only what you nee
 | `@providerprotocol/ai/ollama` | Ollama provider + types |
 | `@providerprotocol/ai/openrouter` | OpenRouter provider + types |
 | `@providerprotocol/ai/proxy` | Proxy provider + server adapters |
-| `@providerprotocol/ai/responses` | OpenAI Responses API provider |
+| `@providerprotocol/ai/responses` | OpenResponses spec provider (multi-server compatible) |
 | `@providerprotocol/ai/http` | HTTP utilities: retry/key strategies |
 | `@providerprotocol/ai/middleware/logging` | Logging middleware |
 | `@providerprotocol/ai/middleware/parsed-object` | Partial JSON parsing middleware |
@@ -956,7 +961,7 @@ const instance3 = llm({
 
 ```typescript
 import { llm } from '@providerprotocol/ai';
-import { exponentialBackoff, linearBackoff, noRetry } from '@providerprotocol/ai/http';
+import { exponentialBackoff, linearBackoff, noRetry, retryAfterStrategy } from '@providerprotocol/ai/http';
 
 const instance = llm({
   model: anthropic('claude-sonnet-4-20250514'),
@@ -978,8 +983,16 @@ const instance2 = llm({
   },
 });
 
-// Disable retries
+// Retry-After header strategy: respects provider's Retry-After header
 const instance3 = llm({
+  model: openai('gpt-4o'),
+  config: {
+    retryStrategy: retryAfterStrategy({ maxAttempts: 3, fallbackDelay: 1000 }),
+  },
+});
+
+// Disable retries
+const instance4 = llm({
   model: openai('gpt-4o'),
   config: {
     retryStrategy: noRetry(),
@@ -1367,6 +1380,18 @@ export default defineEventHandler(async (event) => {
 });
 ```
 
+#### SSE Keepalive
+
+All server adapters send periodic SSE keepalive comments (`:keepalive\n\n`) to prevent idle connection timeouts through Cloudflare HTTP/3 QUIC, nginx, and other reverse proxies. Defaults to 5 seconds.
+
+```typescript
+// Custom keepalive interval (10 seconds)
+h3.createSubscriberSSEStream(streamId, adapter, { keepaliveMs: 10_000 });
+
+// Disable keepalive
+h3.createSubscriberSSEStream(streamId, adapter, { keepaliveMs: 0 });
+```
+
 #### Custom Storage Adapters
 
 Implement `PubSubAdapter` for custom backends (Redis, etc.):
@@ -1550,6 +1575,62 @@ const withHeaders = llm({
   },
 });
 ```
+
+#### Server-Side Conversation Chaining (`previous_response_id`)
+
+OpenAI's Responses API stores conversation state server-side. Instead of sending the full message history each request, you can chain responses by passing the previous response's ID. This reduces payload size and token costs for multi-turn conversations.
+
+```typescript
+import { llm } from '@providerprotocol/ai';
+import { openai } from '@providerprotocol/ai/openai';
+import type { OpenAIResponsesParams } from '@providerprotocol/ai/openai';
+
+// First turn — send store: true so OpenAI retains the response
+const model = llm<OpenAIResponsesParams>({
+  model: openai('gpt-4o'),
+  params: { store: true },
+});
+
+const firstTurn = await model.generate('What is the capital of France?');
+
+// Retrieve the response_id from metadata
+const responseId = (firstTurn.response.metadata?.openai as { response_id?: string })?.response_id;
+
+// Second turn — only sends the new message, OpenAI reconstructs history from the chain
+const continuation = llm<OpenAIResponsesParams>({
+  model: openai('gpt-4o'),
+  params: {
+    previous_response_id: responseId,
+  },
+});
+
+const secondTurn = await continuation.generate('And what is its population?');
+// Model has full context of the previous turn without resending it
+```
+
+The `response_id` is stored in `metadata.openai.response_id` on every assistant message returned from the Responses API.
+
+#### Auto-Compaction (`context_management`)
+
+For long-running agentic loops or extended conversations, server-side context can grow beyond model limits even with `previous_response_id` chaining. Auto-compaction tells OpenAI to compress the stored context when it exceeds a token threshold.
+
+```typescript
+const agent = llm<OpenAIResponsesParams>({
+  model: openai('gpt-4o'),
+  params: {
+    store: true,
+    context_management: [{ type: 'compaction', compact_threshold: 10000 }],
+  },
+});
+
+const turn = await agent.generate('Summarize our conversation so far.');
+
+// Compaction items (if emitted) are automatically stored in metadata
+// and re-sent as input items when the assistant message is included
+// in a subsequent request's message history — no manual handling needed.
+```
+
+When the server-side context exceeds `compact_threshold` tokens, OpenAI emits opaque compaction output items. The SDK automatically preserves these in `metadata.openai.compactionItems` and re-injects them as input items when that assistant message appears in a future request's conversation history.
 
 ### Google
 
@@ -1749,24 +1830,133 @@ const withPreferences = llm({
 });
 ```
 
+### xAI
+
+```typescript
+import { xai, tools } from '@providerprotocol/ai/xai';
+import type {
+  XAICompletionsParams,
+  XAIResponsesParams,
+  XAIMessagesParams,
+  XAIImageParams,
+} from '@providerprotocol/ai/xai';
+
+// Chat Completions API (default, OpenAI-compatible)
+const instance = llm<XAICompletionsParams>({
+  model: xai('grok-4'),
+  params: {
+    max_tokens: 4096,
+    temperature: 0.7,
+  },
+});
+
+// Responses API (stateful conversations)
+const stateful = llm<XAIResponsesParams>({
+  model: xai('grok-4', { api: 'responses' }),
+  params: {
+    max_output_tokens: 1000,
+    store: true,
+  },
+});
+
+// Messages API (Anthropic-compatible)
+const messages = llm<XAIMessagesParams>({
+  model: xai('grok-4', { api: 'messages' }),
+  params: {
+    max_tokens: 1000,
+  },
+});
+
+// Reasoning (Grok 3 Mini)
+const reasoning = llm<XAICompletionsParams>({
+  model: xai('grok-3-mini'),
+  params: {
+    reasoning_effort: 'high',
+  },
+});
+
+// Agent Tools (web search, code execution, etc.)
+const withTools = llm<XAIResponsesParams>({
+  model: xai('grok-4', { api: 'responses' }),
+  params: {
+    tools: [
+      tools.webSearch(),       // Real-time web search
+      tools.xSearch(),         // X/Twitter search
+      tools.codeExecution(),   // Code sandbox
+      tools.fileSearch({ vector_store_ids: ['vs_...'] }),  // File search
+      tools.mcp({ server_label: 'my-server', server_url: 'https://...' }),
+    ],
+  },
+});
+
+// Image generation
+import { image } from '@providerprotocol/ai';
+
+const imageGen = image<XAIImageParams>({
+  model: xai('grok-2-image'),
+});
+```
+
+**xAI API Modes:**
+
+| Mode | Import | Description |
+|------|--------|-------------|
+| `completions` (default) | `XAICompletionsParams` | OpenAI Chat Completions compatible |
+| `responses` | `XAIResponsesParams` | OpenAI Responses API compatible (stateful) |
+| `messages` | `XAIMessagesParams` | Anthropic Messages API compatible |
+
+### Responses (OpenResponses Spec)
+
+The standalone `responses` provider implements the OpenResponses specification for multi-provider, interoperable LLM interfaces. Works with any OpenResponses-compatible server.
+
+```typescript
+import { responses } from '@providerprotocol/ai/responses';
+import type { ResponsesParams } from '@providerprotocol/ai/responses';
+
+// Using with OpenAI
+const instance = llm<ResponsesParams>({
+  model: responses('gpt-4o', { host: 'https://api.openai.com/v1' }),
+  params: {
+    max_output_tokens: 1000,
+  },
+});
+
+// Using with OpenRouter
+const orInstance = llm<ResponsesParams>({
+  model: responses('openai/gpt-4o', {
+    host: 'https://openrouter.ai/api/v1',
+    apiKeyEnv: 'OPENROUTER_API_KEY',
+  }),
+});
+
+// Using with a self-hosted server
+const localInstance = llm<ResponsesParams>({
+  model: responses('llama-3.3-70b', {
+    host: 'http://localhost:8080/v1',
+    apiKeyEnv: 'LOCAL_API_KEY',
+  }),
+});
+```
+
 ---
 
 ## Provider Capability Matrix
 
-| Provider | LLM | Embed | Image | Streaming | Tools | Structured | Vision | Documents |
-|----------|:---:|:-----:|:-----:|:---------:|:-----:|:----------:|:------:|:---------:|
-| Anthropic | ✓ | | | ✓ | ✓ | ✓ | ✓ | ✓ |
-| OpenAI | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Google | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| xAI | ✓ | | ✓ | ✓ | ✓ | ✓ | ✓ | |
-| Groq | ✓ | | | ✓ | ✓ | ✓ | ✓ | |
-| Cerebras | ✓ | | | ✓ | ✓ | ✓ | | |
-| Moonshot | ✓ | | | ✓ | ✓ | ✓ | ✓ | |
-| Ollama | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | |
-| OpenRouter | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Proxy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Provider | LLM | Embed | Image | Streaming | Tools | Structured | Vision | Documents | Video | Audio |
+|----------|:---:|:-----:|:-----:|:---------:|:-----:|:----------:|:------:|:---------:|:-----:|:-----:|
+| Anthropic | ✓ | | | ✓ | ✓ | ✓ | ✓ | ✓ | | |
+| OpenAI | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | |
+| Google | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| xAI | ✓ | | ✓ | ✓ | ✓ | ✓ | ✓ | | | |
+| Groq | ✓ | | | ✓ | ✓ | ✓ | ✓ | | | |
+| Cerebras | ✓ | | | ✓ | ✓ | ✓ | | | | |
+| Moonshot | ✓ | | | ✓ | ✓ | ✓ | ✓ | | ✓ | |
+| Ollama | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | | | |
+| OpenRouter | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Responses | ✓ | | | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Proxy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-*Proxy capabilities depend on your backend implementation.*
+*Proxy and Responses capabilities depend on your backend/server implementation.*
 
 ---
 
