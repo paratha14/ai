@@ -24,6 +24,20 @@ export interface StreamWriter {
  */
 export interface StreamOptions {
   signal?: AbortSignal;
+  /**
+   * Interval in milliseconds between SSE keepalive comments (`:keepalive\n\n`).
+   *
+   * Keeps connections alive through reverse proxies and CDNs that enforce
+   * idle timeouts (e.g. Cloudflare HTTP/3 QUIC, nginx proxy_read_timeout).
+   * Pipeline stages like image generation can create gaps of 10-30+ seconds
+   * with no data on the wire, causing proxies to kill the connection.
+   *
+   * SSE comments (lines starting with `:`) are ignored by all spec-compliant
+   * clients and the providerprotocol SSE parser.
+   *
+   * Set to `0` to disable. Defaults to `5000` (5 seconds).
+   */
+  keepaliveMs?: number;
 }
 
 /**
@@ -52,12 +66,22 @@ export async function runSubscriberStream(
   writer: StreamWriter,
   options: StreamOptions = {}
 ): Promise<void> {
-  const { signal } = options;
+  const { signal, keepaliveMs = 5_000 } = options;
 
   if (signal?.aborted) {
     writer.end();
     return;
   }
+
+  // Send periodic SSE comments to keep connections alive through reverse
+  // proxies and CDNs (e.g. Cloudflare HTTP/3 idle timeout, nginx).
+  const keepaliveTimer = keepaliveMs > 0
+    ? setInterval(() => {
+        if (!signal?.aborted) {
+          writer.write(':keepalive\n\n');
+        }
+      }, keepaliveMs)
+    : null;
 
   try {
     if (signal?.aborted) {
@@ -182,5 +206,9 @@ export async function runSubscriberStream(
       writer.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
     }
     writer.end();
+  } finally {
+    if (keepaliveTimer !== null) {
+      clearInterval(keepaliveTimer);
+    }
   }
 }

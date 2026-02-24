@@ -1342,6 +1342,7 @@ app.post('/api/ai', async (request, reply) => {
 **H3/Nuxt:**
 
 ```typescript
+import { sendStream, setHeader } from 'h3';
 import { h3 } from '@providerprotocol/ai/middleware/pubsub/server/h3';
 
 export default defineEventHandler(async (event) => {
@@ -1356,7 +1357,13 @@ export default defineEventHandler(async (event) => {
     model.stream(messages).then(turn => { /* save to DB */ });
   }
 
-  return h3.streamSubscriber(streamId, adapter, event);
+  // Required: H3's sendStream does NOT set these headers
+  setHeader(event, 'Content-Type', 'text/event-stream');
+  setHeader(event, 'Cache-Control', 'no-cache');
+  setHeader(event, 'Connection', 'keep-alive');
+  setHeader(event, 'X-Accel-Buffering', 'no');
+
+  return sendStream(event, h3.createSubscriberSSEStream(streamId, adapter));
 });
 ```
 

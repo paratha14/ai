@@ -79,6 +79,7 @@ export function getAdapter(state: Map<string, unknown>): PubSubAdapter | undefin
  * import { llm } from '@providerprotocol/ai';
  * import { anthropic } from '@providerprotocol/ai/anthropic';
  * import { pubsubMiddleware, memoryAdapter } from '@providerprotocol/ai/middleware/pubsub';
+ * import { sendStream, setHeader } from 'h3';
  * import { h3 } from '@providerprotocol/ai/middleware/pubsub/server';
  *
  * const adapter = memoryAdapter();
@@ -95,7 +96,13 @@ export function getAdapter(state: Map<string, unknown>): PubSubAdapter | undefin
  *     model.stream(input).then(turn => saveToDatabase(turn));
  *   }
  *
- *   return h3.streamSubscriber(conversationId, adapter, event);
+ *   // Required: H3's sendStream does NOT set these headers
+ *   setHeader(event, 'Content-Type', 'text/event-stream');
+ *   setHeader(event, 'Cache-Control', 'no-cache');
+ *   setHeader(event, 'Connection', 'keep-alive');
+ *   setHeader(event, 'X-Accel-Buffering', 'no');
+ *
+ *   return sendStream(event, h3.createSubscriberSSEStream(conversationId, adapter));
  * });
  * ```
  */

@@ -1512,6 +1512,7 @@ export function mcpTool(options: {
   url: string;
   name?: string;
   allowed_tools?: string[] | { type: 'all' };
+  allowed_resources?: string[];
   headers?: Record<string, string>;
   require_approval?: 'always' | 'never' | { type: 'except'; tools: string[] };
 }): OpenAIMcpTool {
@@ -1519,6 +1520,7 @@ export function mcpTool(options: {
     url,
     name,
     allowed_tools: allowedTools,
+    allowed_resources: allowedResources,
     headers,
     require_approval: requireApproval,
   } = options;
@@ -1529,6 +1531,7 @@ export function mcpTool(options: {
         url,
         name,
         ...(allowedTools && { tool_configuration: { allowed_tools: allowedTools } }),
+        ...(allowedResources && { allowed_resources: allowedResources }),
         headers,
         require_approval: requireApproval,
       },

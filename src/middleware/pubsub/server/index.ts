@@ -87,7 +87,7 @@ export type { PubSubAdapter } from '../types.ts';
  *
  * @example H3/Nuxt
  * ```typescript
- * import { sendStream } from 'h3';
+ * import { sendStream, setHeader } from 'h3';
  * import { h3 } from '@providerprotocol/ai/middleware/pubsub/server';
  *
  * export default defineEventHandler(async (event) => {
@@ -101,6 +101,12 @@ export type { PubSubAdapter } from '../types.ts';
  *     });
  *     model.stream(messages).then(turn => saveToDatabase(turn));
  *   }
+ *
+ *   // Required: H3's sendStream does NOT set these headers
+ *   setHeader(event, 'Content-Type', 'text/event-stream');
+ *   setHeader(event, 'Cache-Control', 'no-cache');
+ *   setHeader(event, 'Connection', 'keep-alive');
+ *   setHeader(event, 'X-Accel-Buffering', 'no');
  *
  *   return sendStream(event, h3.createSubscriberSSEStream(streamId, adapter));
  * });

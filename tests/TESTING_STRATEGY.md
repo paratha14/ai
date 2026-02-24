@@ -86,6 +86,7 @@ Each contract file validates a specific protocol surface. This section exists so
 | `middleware/pipeline.contract` | Pipeline stage event shapes, continueOnError vs fail-fast, onStageError callback timing |
 | `middleware/persistence.contract` | Thread message deduplication, turnStartIndex calculation, adapter failure wrapping |
 | `middleware/pubsub-memory.contract` | Cursor monotonicity, stream lifecycle (create → append → publish → finalize), retry buffer clearing |
+| `middleware/pubsub-server.contract` | SSE keepalive heartbeat behavior, keepalive disable flag, and Cloudflare-safe SSE headers for Express/Fastify adapters |
 | `middleware/parsed-object.contract` | Incremental JSON parsing per index, state isolation across tool calls, reset on retry |
 | `middleware/logging.contract` | Log level filtering, tool call/result gating, abort vs error differentiation |
 
