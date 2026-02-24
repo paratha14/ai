@@ -313,6 +313,9 @@ export interface OpenAIResponsesParams {
   /** Truncation strategy */
   truncation?: 'auto' | 'disabled';
 
+  /** Context management for automatic compaction in long-running conversations */
+  context_management?: Array<{ type: 'compaction'; compact_threshold: number }>;
+
   /**
    * Fields to include in output
    * Supported values:
